@@ -78,20 +78,26 @@ input, select, textarea {
 
 	.bibentry {
 		display: block;
-		margin-bottom: 1em
+		margin-top: 0;
+		margin-bottom: 0;
+		line-height: .5em
 	}
 
 	.bibentry .title {
-		margin-bottom: 0
+		font-size: 1.1em;
+		line-height: 1.3em
 	}
 
 	.bibentry .authors {
-		margin-bottom: 0
+		margin-bottom: 0;
+		font-size: .94em;
+		line-height: 1.3em
 	}
 
 	.bibentry .pubinfo {
 		color:dimgray;
-		margin-bottom: 0
+		font-size: .94em;
+		line-height: 1.1em
 	}
 
 
