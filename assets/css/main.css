@@ -1,4 +1,5 @@
 @import url(fontawesome-all.min.css);
+@import url(academicons.min.css);
 @import url("https://fonts.googleapis.com/css?family=Source+Sans+Pro:300italic,600italic,300,600");
 
 /*
@@ -694,8 +695,19 @@ input, select, textarea {
 				width: 100%;
 			}
 
+		.image.shrink {
+			text-align: center;
+			display: block;
+			margin: 0 0 2rem 0;
+			margin-left: auto;
+    		margin-right: auto;
+			width: 50%;
+		}
+
 		.image.shrink img {
-				width: 50%;
+			margin-left: auto;
+			margin-right: auto;
+			width: 100%;
 			}
 
 		.image.main {
