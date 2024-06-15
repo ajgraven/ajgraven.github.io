@@ -73,6 +73,30 @@ input, select, textarea {
 	appearance: none;
 }
 
+
+/* Text */
+
+	.bibentry {
+		display: block;
+		margin-bottom: 1em
+	}
+
+	.bibentry .title {
+		margin-bottom: 0
+	}
+
+	.bibentry .authors {
+		margin-bottom: 0
+	}
+
+	.bibentry .pubinfo {
+		color:dimgray;
+		margin-bottom: 0
+	}
+
+
+
+
 /* Basic */
 
 	@-ms-viewport {
