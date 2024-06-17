@@ -1,0 +1,428 @@
+{
+	"auto_complete":
+	{
+		"selected_items":
+		[
+			[
+				"set",
+				"set_xrng"
+			],
+			[
+				"get_con",
+				"get_condition_name_dates"
+			],
+			[
+				"get_med",
+				"get_med_by_name"
+			],
+			[
+				"forma",
+				"format_func"
+			],
+			[
+				"format",
+				"format_func"
+			],
+			[
+				"get_condition_",
+				"get_condition_by_name_start"
+			],
+			[
+				"Grid",
+				"GridUpdateMode"
+			],
+			[
+				"get_cond",
+				"get_conditions"
+			],
+			[
+				"get_condition",
+				"get_condition_names"
+			],
+			[
+				"default",
+				"default_units"
+			],
+			[
+				"def",
+				"default_min"
+			],
+			[
+				"get_tes",
+				"get_test_by_name"
+			],
+			[
+				"cond",
+				"condition"
+			],
+			[
+				"get_me",
+				"get_med_by_name"
+			],
+			[
+				"get_lates",
+				"get_latest_BP"
+			],
+			[
+				"_",
+				"_regimens"
+			],
+			[
+				"Js",
+				"JsCode"
+			],
+			[
+				"get_re",
+				"get_ref_range"
+			],
+			[
+				"get_panel",
+				"get_panel_by_name_date"
+			],
+			[
+				"get_te",
+				"get_test_names"
+			],
+			[
+				"disp",
+				"display_test_table"
+			],
+			[
+				"ref",
+				"_ref_range"
+			],
+			[
+				"show",
+				"show_gauge_with_date"
+			],
+			[
+				"get_la",
+				"get_latest_bad_tests"
+			],
+			[
+				"get_c",
+				"get_current_regimens"
+			],
+			[
+				"get_da",
+				"get_date"
+			],
+			[
+				"dru",
+				"drug_class_string"
+			],
+			[
+				"dcm",
+				"dcmread"
+			],
+			[
+				"get_ref",
+				"get_ref_rng_width"
+			],
+			[
+				"get",
+				"get_panel_by_name_date"
+			],
+			[
+				"_s",
+				"_sex"
+			],
+			[
+				"is",
+				"is_normal"
+			],
+			[
+				"mkr",
+				"mkr_thickness"
+			],
+			[
+				"add_rei",
+				"add_regimens"
+			],
+			[
+				"Regi",
+				"Regimen"
+			],
+			[
+				"add_",
+				"add_conditions"
+			],
+			[
+				"add_cond",
+				"add_conditions"
+			],
+			[
+				"get_b",
+				"get_birthday_string"
+			],
+			[
+				"disc",
+				"discipline"
+			],
+			[
+				"add_tes",
+				"add_tests_raw"
+			]
+		]
+	},
+	"buffers":
+	[
+		{
+			"file": "index.html",
+			"settings":
+			{
+				"buffer_size": 14894,
+				"encoding": "UTF-8",
+				"line_ending": "Windows"
+			}
+		}
+	],
+	"build_system": "Packages/Python/Python.sublime-build",
+	"build_system_choices":
+	[
+		[
+			[
+				[
+					"Packages/Python/Python.sublime-build",
+					""
+				],
+				[
+					"Packages/Python/Python.sublime-build",
+					"Syntax Check"
+				]
+			],
+			[
+				"Packages/Python/Python.sublime-build",
+				""
+			]
+		]
+	],
+	"build_varint": "",
+	"command_palette":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+			[
+				"Bro",
+				"Preferences: Browse Packages"
+			]
+		],
+		"width": 0.0
+	},
+	"console":
+	{
+		"height": 0.0,
+		"history":
+		[
+		]
+	},
+	"distraction_free":
+	{
+		"menu_visible": true,
+		"show_minimap": false,
+		"show_open_files": false,
+		"show_tabs": false,
+		"side_bar_visible": false,
+		"status_bar_visible": false
+	},
+	"expanded_folders":
+	[
+		"/C/Users/Andrew Graven/Documents/GitHub/ajgraven.github.io"
+	],
+	"file_history":
+	[
+		"/C/Users/Andrew Graven/Documents/GitHub/PyFractal/PyFractalUtils.py",
+		"/C/Users/Andrew Graven/Documents/GitHub/ajgraven.github.io/index.html",
+		"/C/Users/Andrew Graven/Documents/GitHub/PyFractal/JuliaInteractive.py",
+		"/C/Users/Andrew Graven/Documents/GitHub/PyFractal/FractalPlot.py",
+		"/C/Users/andre/Documents/GitHub/PyFractal/PyFractalUtils.py",
+		"/C/Users/andre/Documents/GitHub/PyFractal/JuliaInteractive.py",
+		"/C/Users/andre/Documents/GitHub/PyFractal/FractalPlot.py",
+		"/C/Users/andre/Desktop/PyFractal/PyFractalv4/FractalPlot.py",
+		"/C/Users/andre/Desktop/PyFractal/PyFractalv4/JuliaInteractive.py",
+		"/C/Users/andre/Desktop/PHR App/main.py",
+		"/C/Users/andre/Desktop/PHR App/MyPHR_LoadData.py",
+		"/C/Users/andre/Desktop/PHR App/lib/Utils.py",
+		"/C/Users/andre/Desktop/PHR App/lib/MyPHRUtils.py",
+		"/C/Users/andre/Desktop/PHR App/lib/bar_gauge.py",
+		"/C/Users/andre/Desktop/PHR App/lib/HandleDICOMs.py",
+		"/C/Users/andre/Desktop/PHR App/lib/__init__.py",
+		"/C/Users/andre/Desktop/PHR App/lib/GetVolumeFig.py",
+		"/C/Users/andre/Desktop/PHR App/.streamlit/config.toml",
+		"/C/Users/andre/Desktop/PHR App/lib/config.toml",
+		"/C/Users/andre/Desktop/PHR App/lib/ShowVolume.py",
+		"/C/Users/andre/Desktop/PHR App/MyPHR_TestData.py",
+		"/C/Users/andre/Desktop/PHR App/lib/style.css",
+		"/C/Users/andre/Desktop/PHR App/lib/ProfileTemplate.py",
+		"/C/Users/andre/Desktop/PHR App/MyPHRUtils.py",
+		"/C/Users/andre/Desktop/PHR App/bar_gauge.py",
+		"/C/Users/andre/Desktop/PHR App/test.html",
+		"/C/Users/andre/Desktop/PHR App/MyPHR_Test.py",
+		"/C/Users/andre/Desktop/PHR App/Andrew_panels.csv",
+		"/C/Users/andre/Desktop/PHR App/Utils/MyPHRUtils.py"
+	],
+	"find":
+	{
+		"height": 22.0
+	},
+	"find_in_files":
+	{
+		"height": 0.0,
+		"where_history":
+		[
+		]
+	},
+	"find_state":
+	{
+		"case_sensitive": false,
+		"find_history":
+		[
+			">",
+			"set_clim",
+			"resize",
+			"plot_canvas"
+		],
+		"highlight": true,
+		"in_selection": false,
+		"preserve_case": false,
+		"regex": true,
+		"replace_history":
+		[
+		],
+		"reverse": false,
+		"scrollbar_highlights": true,
+		"show_context": true,
+		"use_buffer2": true,
+		"use_gitignore": true,
+		"whole_word": false,
+		"wrap": true
+	},
+	"groups":
+	[
+		{
+			"sheets":
+			[
+				{
+					"buffer": 0,
+					"file": "index.html",
+					"selected": true,
+					"semi_transient": true,
+					"settings":
+					{
+						"buffer_size": 14894,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								0,
+								0
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/HTML/HTML.sublime-syntax",
+							"tab_size": 4,
+							"translate_tabs_to_spaces": false
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 0,
+					"stack_multiselect": false,
+					"type": "text"
+				}
+			]
+		}
+	],
+	"incremental_find":
+	{
+		"height": 22.0
+	},
+	"input":
+	{
+		"height": 39.2000007629
+	},
+	"layout":
+	{
+		"cells":
+		[
+			[
+				0,
+				0,
+				1,
+				1
+			]
+		],
+		"cols":
+		[
+			0.0,
+			1.0
+		],
+		"rows":
+		[
+			0.0,
+			1.0
+		]
+	},
+	"menu_visible": true,
+	"output.exec":
+	{
+		"height": 102.0
+	},
+	"output.find_results":
+	{
+		"height": 0.0
+	},
+	"pinned_build_system": "Packages/Python/Python.sublime-build",
+	"project": "andrew_website.sublime-project",
+	"replace":
+	{
+		"height": 40.0
+	},
+	"save_all_on_build": true,
+	"select_file":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 0.0
+	},
+	"select_project":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 0.0
+	},
+	"select_symbol":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 0.0
+	},
+	"selected_group": 0,
+	"settings":
+	{
+	},
+	"show_minimap": true,
+	"show_open_files": false,
+	"show_tabs": true,
+	"side_bar_visible": true,
+	"side_bar_width": 246.0,
+	"status_bar_visible": true,
+	"template_settings":
+	{
+	}
+}
