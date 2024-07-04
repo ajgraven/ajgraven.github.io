@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>Cindy JS</title>
+        <script type="text/javascript" src="https://cindyjs.org/dist/v0.8/Cindy.js"></script>
+        <script type="text/javascript" src="https://cindyjs.org/dist/v0.8/CindyGL.js"></script>
+        <link rel="stylesheet" href="https://cindyjs.org/dist/v0.8/CindyJS.css" />
+    </head>
+
+    <body style="font-family: Arial">
+        <h1>Complex Dynamics Visualization Tool (alpha version)</h1>
+        <h2>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+        Parameter Space
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+        Dynamical Plane</h2>
+        <script id="csinit" type="text/x-cindyscript">
+            use("CindyGL");
+
+            e = 2.718281828;
+            n = 20;
+            C0 = 1;
+
+            // Parameter space plot coordinate transformations
+            mandelminx = -1;
+            mandelminy = -3;
+            mandelmaxx = 5;
+            mandelmaxy = 3;
+            mandelcanvminx = 0;
+            mandelcanvminy = 0;
+            mandelcanvmaxx = 2;
+            mandelcanvmaxy = 2;
+            mandelaspectratio = (mandelmaxx-mandelminx)/(mandelmaxy-mandelminy);
+
+
+            mPltToCanvX(x) := (x-mandelminx)*((mandelcanvmaxx-mandelcanvminx)/(mandelmaxx-mandelminx))+mandelcanvminx; // plot coordinate to canvas coordinate
+            mPltToCanvY(y) := (y-mandelminy)*((mandelcanvmaxy-mandelcanvminy)/(mandelmaxy-mandelminy))+mandelcanvminy; // plot coordinate to canvas coordinate
+            mPltToCanvZ(z) := mPltToCanvX(re(z))+i*mPltToCanvY(im(z)); // plot coordinate to canvas coordinate
+            
+            mCanvToPltX(x) := (x-mandelcanvminx)*((mandelmaxx-mandelminx)/(mandelcanvmaxx-mandelcanvminx))+mandelminx; // canvas coordinate to plot coordinate
+            mCanvToPltY(y) := (y-mandelcanvminy)*((mandelmaxy-mandelminy)/(mandelcanvmaxy-mandelcanvminy))+mandelminy; // canvas coordinate to plot coordinate
+            mCanvToPltZ(z) := mCanvToPltX(re(z))+i*mCanvToPltY(im(z)); // canvas coordinate to plot coordinate
+
+            
+
+            C0 = mPltToCanvZ(C0);
+
+            // Dynamical plane plot coordinate transformations
+            jminx = -1;
+            jminy = -6;
+            jmaxx = 11;
+            jmaxy = 6;
+            jcanvminx = 2.01;
+            jcanvminy = 0;
+            jcanvmaxx = 4.01;
+            jcanvmaxy = 2;
+            jaspectratio = (jmaxx-jminx)/(jmaxy-jminy);
+            jcanvaspectratio = (jcanvmaxx-jcanvminx)/(jcanvmaxy-jcanvminy);
+
+
+            jPltToCanvX(x) := (x-jminx)*((jcanvmaxx-jcanvminx)/(jmaxx-jminx))+jcanvminx; // plot coordinate to canvas coordinate
+            jPltToCanvY(y) := (y-jminy)*((jcanvmaxy-jcanvminy)/(jmaxy-jminy))+jcanvminy; // plot coordinate to canvas coordinate
+            jPltToCanvZ(z) := jPltToCanvX(re(z))+i*jPltToCanvY(im(z)); // plot coordinate to canvas coordinate
+            
+            jCanvToPltX(x) := (x-jcanvminx)*((jmaxx-jminx)/(jcanvmaxx-jcanvminx))+jminx; // canvas coordinate to plot coordinate
+            jCanvToPltY(y) := (y-jcanvminy)*((jmaxy-jminy)/(jcanvmaxy-jcanvminy))+jminy; // canvas coordinate to plot coordinate
+            jCanvToPltZ(z) := jCanvToPltX(re(z))+i*jCanvToPltY(im(z)); // canvas coordinate to plot coordinate
+
+
+
+            reim(z) := [re(z),im(z)];
+
+            lwZeroApprox(z) := (
+            ezsqrt = sqrt(1 + e*z);
+                (12*ezsqrt*(45*sqrt(2) + 32*ezsqrt))/(sqrt(e)*(623 + 83*e*z + 372*sqrt(2)*ezsqrt))-1;
+            );
+
+            lwInftyApprox(z) := log(z)-log(log(z))+log(log(z))/log(z);
+
+            lambertw(z) :=(
+                if(abs(z)<1.7,
+                    w=lwZeroApprox(z),
+                    w=lwInftyApprox(z)
+                );
+                repeat(5,
+                    w=(w^2+z/exp(w))/(w+1);
+                );
+                w
+            );
+
+            f(z, c) := (
+                c0 = c^2/z;
+                c1 = lambertw(-c0);
+                conjugate(c0/exp(c1+c^2/c1));
+            );
+
+            juliaescape(z, c) := (
+                if(re(z)<-5,true,
+                if(abs(lambertw(-c^2/f(z,c)))>abs(c),true,false)
+                );
+            );
+
+            mandelescape(z, c) := (
+                abs(lambertw(-c^2/f(z,c)))>abs(c)
+            );
+
+            juliaiter(z, c) := ( //returns the number of iterates to escape for dynamical plane, or n (max) if escape fails
+                kmax=0;
+                repeat(n,k,
+                    if(not(juliaescape(z,c)),
+                        z = f(z,c);
+                        kmax=k;
+                    );
+                );
+            );
+
+
+            mandeliter(z, c) := ( //returns the number of iterates to escape for dynamical plane, or n (max) if escape fails
+                kmax=0;
+                repeat(n,k,
+                    if(not(mandelescape(z,c)),
+                        z = f(z,c);
+                        kmax=k;
+                    );
+                );
+            );
+
+            julianiter(z,c,k) := ( // returns first k iterates of dynamical plane starting at z
+                zs = [z];
+                repeat(k,l,
+                    if(not(juliaescape(z,c)),
+                        z = f(z,c);
+                        zs=append(zs,z);
+                    );
+                );
+                append(zs,f(z,c));
+            );
+
+            color(u) := (
+                //hue(re(log(1+(e-1)*(u/n))));
+                (re(log(u+1)/log(n+1)),u/n,.2)
+            );
+
+
+
+            createimage("mandel", 500, 500);
+            createimage("julia",  500, 500);
+        </script>
+        <script id="csmove" type="text/x-cindyscript">
+            errc(n);
+
+            c = mCanvToPltZ(complex(C));
+
+            mShift(ratio,dir) := ( //Translates parameter space window by ratio of window width/height
+                if(dir=="horizontal",
+                    shift = (mandelmaxx-mandelminx)*ratio;
+                    mandelminxtemp = mandelminx + shift;
+                    mandelmaxx = mandelmaxx + shift;
+                    mandelminx = mandelminxtemp;
+                    C.x = mPltToCanvX(re(c));,
+                    shift = (mandelmaxy-mandelminy)*ratio;
+                    mandelminytemp = mandelminy + shift;
+                    mandelmaxy = mandelmaxy + shift;
+                    mandelminy = mandelminytemp;
+                    C.y = mPltToCanvY(im(c));
+                );
+            );
+
+            mZoom(ratio) := ( //Zooms parameter space window by ratio of window width/height
+                cx = (mandelmaxx+mandelminx)/2;
+                cy = (mandelmaxy+mandelminy)/2;
+                mxminc = (mandelminx-cx)*ratio;
+                mxmaxc = (mandelmaxx-cx)*ratio;
+                myminc = (mandelminy-cy)*ratio;
+                mymaxc = (mandelmaxy-cy)*ratio;
+                mandelminx = mxminc + cx;
+                mandelmaxx = mxmaxc + cx;
+                mandelminy = myminc + cy;
+                mandelmaxy = mymaxc + cy;
+                C.xy = reim(mPltToCanvZ(c));
+            );
+
+            jShift(ratio,dir) := ( //Translates parameter space window by ratio of window width/height
+                Ipos = jCanvToPltZ(complex(I.xy));
+                if(dir=="horizontal",
+                    shift = (jmaxx-jminx)*ratio;
+                    jminxtemp = jminx + shift;
+                    jmaxx = jmaxx + shift;
+                    jminx = jminxtemp;
+                    I.x = jPltToCanvX(re(Ipos));,
+                    shift = (jmaxy-jminy)*ratio;
+                    jminytemp = jminy + shift;
+                    jmaxy = jmaxy + shift;
+                    jminy = jminytemp;
+                    I.y = jPltToCanvY(im(Ipos));
+                );
+            );
+
+            jZoom(ratio) := ( //Zooms parameter space window by ratio of window width/height
+                Ipos = jCanvToPltZ(complex(I.xy));
+                cx = (jmaxx+jminx)/2;
+                cy = (jmaxy+jminy)/2;
+                jxminc = (jminx-cx)*ratio;
+                jxmaxc = (jmaxx-cx)*ratio;
+                jyminc = (jminy-cy)*ratio;
+                jymaxc = (jmaxy-cy)*ratio;
+                jminx = jxminc + cx;
+                jmaxx = jxmaxc + cx;
+                jminy = jyminc + cy;
+                jmaxy = jymaxc + cy;
+                I.xy = reim(jPltToCanvZ(Ipos));
+            );
+
+        
+
+           C.color  = (0,0,0);
+           I.color  = (0,0,1);
+
+           colorplot([mandelminx,mandelminy],[mandelmaxx,mandelminy],"mandel", color(mandeliter(complex(#),complex(#))));
+           colorplot([jminx,jminy],[jmaxx,jminy],"julia",color(juliaiter(complex(#), c)));
+
+           drawimage([jcanvminx,jcanvminy],[jcanvmaxx,jcanvminy], "julia");
+           connect(apply(julianiter(jCanvToPltZ(complex(I.xy)),c,5),reim(jPltToCanvZ(#))));
+           drawimage([mandelcanvminx,mandelcanvminy],[mandelcanvmaxx,mandelcanvminy], "mandel");
+           drawtext(C+(.015,.015), "c="+c, color->[0,0,0],size->15);
+           drawtext(I+(.015,.015), jCanvToPltZ(complex(I.xy)), color->[0,0,0],size->15);
+           
+
+     </script>
+     <div style="float: left;">
+        <div id="CSCanvas"></div>
+
+        <script type="text/javascript">
+            var gslp = [
+                { name: "C", kind: "P", type: "Free", pos: [2/3,1], size: 3 },
+                { name: "I", kind: "P", type: "Free", pos: [2.75,1.1], size: 3 },
+            ];
+
+
+            var cdy = CindyJS({
+                canvasname: "CSCanvas",
+                scripts: "cs*",
+                geometry: gslp,
+                ports: [
+                    {
+                        id: "CSCanvas",
+                        width: 1000,
+                        height: 500,
+                        transform: [{ visibleRect: [0,0,4.01,2] }],
+                    },
+                ],
+            });
+
+
+            
+            var setf=function(e, b){
+              var chCode=e.which ? e.which:e.keyCode;
+              //if(chCode==13){
+                cdy.evokeCS('f(z,c) := (' + b.value + ');');
+              //}
+            }
+
+            var setparameterescape=function(e, b){
+              var chCode=e.which ? e.which:e.keyCode;
+              //if(chCode==13){
+                cdy.evokeCS('mandelescape(z,c) := (' + b.value + ');');
+              //}
+            }
+
+            var setdynplaneescape=function(e, b){
+              var chCode=e.which ? e.which:e.keyCode;
+              //if(chCode==13){
+                cdy.evokeCS('juliaescape(z,c) := (' + b.value + ');');
+              //}
+            }
+
+            var setc=function(e, b){
+              var chCode=e.which ? e.which:e.keyCode;
+              //if(chCode==13){
+                cdy.evokeCS('moveto(C,reim(mPltToCanvZ(' + b.value + ')));');
+              //}
+            }
+
+            var setn=function(e, b){
+              var chCode=e.which ? e.which:e.keyCode;
+              //if(chCode==13){
+                cdy.evokeCS('n=' + b.value + ';');
+              //}
+            }
+
+            // Parameter space coordinate transformations
+
+            var paramleft=function(){
+              //if(chCode==13){
+                cdy.evokeCS('mShift(-1/8,"horizontal");');
+              //}
+            }
+
+            var paramright=function(){
+              //if(chCode==13){
+                cdy.evokeCS('mShift(1/8,"horizontal");');
+              //}
+            }
+            var paramup=function(){
+              //if(chCode==13){
+                cdy.evokeCS('mShift(1/8,"vertical");');
+              //}
+            }
+
+            var paramdown=function(){
+              //if(chCode==13){
+                cdy.evokeCS('mShift(-1/8,"vertical");');
+              //}
+            }
+
+            var paramzoomin=function(){
+              //if(chCode==13){
+                cdy.evokeCS("mZoom(2/3);");
+              //}
+            }
+
+            var paramzoomout=function(){
+              //if(chCode==13){
+                cdy.evokeCS("mZoom(3/2);");
+              //}
+            }
+
+            // Dynamical plane coordinate transformations
+
+            var jleft=function(){
+              //if(chCode==13){
+                cdy.evokeCS('jShift(-1/8,"horizontal");');
+              //}
+            }
+
+            var jright=function(){
+              //if(chCode==13){
+                cdy.evokeCS('jShift(1/8,"horizontal");');
+              //}
+            }
+            var jup=function(){
+              //if(chCode==13){
+                cdy.evokeCS('jShift(1/8,"vertical");');
+              //}
+            }
+
+            var jdown=function(){
+              //if(chCode==13){
+                cdy.evokeCS('jShift(-1/8,"vertical");');
+              //}
+            }
+
+            var jzoomin=function(){
+              //if(chCode==13){
+                cdy.evokeCS("jZoom(2/3);");
+              //}
+            }
+
+            var jzoomout=function(){
+              //if(chCode==13){
+                cdy.evokeCS("jZoom(3/2);");
+              //}
+            }
+
+
+        </script>
+
+        </div>
+    <table cols=3 rows=2>
+        <tr style="vertical-align: top;">
+            <th>
+                <div style="text-align:center;position:relative;display:inline-block;">
+                    <p>c</p><input type="text"     id="inpc" value="1"  onblur="setc(event, this)" size="5" style="font-size:18px">
+                </div>
+            </th>
+        </tr>
+        <tr style="vertical-align: top;">
+            <th>
+                <div style="text-align:center;position:relative;display:inline-block;">
+                <p>max # iterations</p><input type="text"     id="inpn" value="20"  onblur="setn(event, this)" size="5" style="font-size:18px">
+            </div>
+            </th>
+        </tr>
+    </table>
+    </body>
+    <table cols=2 rows=1 style="width:1000px;margin: 0 auto;">
+        <tr style="text-align: center;vertical-align: top;">
+            <td style="width:50%;">
+                <table cols=3 rows=3> <!-- Parameter space zoom and translate buttons -->
+                    <tr style="vertical-align: top;">
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;"></div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                            <button style="height:25px;width:50px;" onclick='paramup();' type="button" >&#8593;</button>
+                            </div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;"></div>
+                        </th>
+                    </tr>
+                    <tr style="vertical-align: top;">
+                       <th>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                                <button style="height:25px;width:50px;" onclick='paramleft();' type="button" >&#8592;</button>
+                            </div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                                <button style="height:25px;width:25px;" onclick='paramzoomin();' type="button" >+</button>
+                                <button style="height:25px;width:25px;" onclick='paramzoomout();' type="button" >-</button>
+                            </div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                                <button style="height:25px;width:50px;" onclick='paramright();' type="button" >&#8594;</button>
+                            </div>
+                        </th>
+                    </tr>
+                    <tr style="vertical-align: top;">
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;"></div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                                <button style="height:25px;width:50px;" onclick='paramdown();' type="button" >&#8595;</button>
+                            </div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;"></div>
+                        </th>
+                    </tr>
+                </table>
+            </td>
+            <td style="width:50%;">
+                <table cols=3 rows=3> <!-- Dynamical plane zoom and translate buttons -->
+                    <tr style="vertical-align: top;">
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;"></div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                                <button style="height:25px;width:50px;" onclick='jup();' type="button" >&#8593;</button>
+                            </div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;"></div>
+                        </th>
+                    </tr>
+                    <tr style="vertical-align: top;">
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                                <button style="height:25px;width:50px;" onclick='jleft();' type="button" >&#8592;</button>
+                            </div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                                <button style="height:25px;width:25px;" onclick='jzoomin();' type="button" >+</button>
+                                <button style="height:25px;width:25px;" onclick='jzoomout();' type="button" >-</button>
+                            </div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                                <button style="height:25px;width:50px;" onclick='jright();' type="button" >&#8594;</button>
+                            </div>
+                        </th>
+                    </tr>
+                    <tr style="vertical-align: top;">
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;"></div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                                <button style="height:25px;width:50px;" onclick='jdown();' type="button" >&#8595;</button>
+                            </div>
+                        </th>
+                        <th>
+                            <div style="text-align:center;position:relative;display:inline-block;"></div>
+                        </th>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+    <table cols=3 rows=1>
+        <tr style="vertical-align: top;">
+            <th>
+                <div style="text-align:center;position:relative;display:inline-block;">
+                    <p>f(z,c)</p><textarea id="inpf" onblur="setf(event, this)" rows="3" cols="28" style="font-size:18px">c0 = c^2/z;&#13;&#10;c1 = lambertw(-c0);&#13;&#10;conjugate(c0/exp(c1+c^2/c1));</textarea>
+                </div>
+            </th>
+            <th>
+                <div style="text-align:center;position:relative;display:inline-block;">
+                    <p>parameter_escape_condition(z,c)</p><textarea id="inpme" onblur="setparameterescape(event, this)" rows="3" cols="28" style="font-size:18px">abs(lambertw(-c^2/f(z,c)))>abs(c);</textarea>
+                </div>
+            </th>
+            <th>
+                <div style="text-align:center;position:relative;display:inline-block;">
+                    <p>dynamical_escape_condition(z,c)</p><textarea id="inpje" onblur="setdynplaneescape(event, this)" rows="3" cols="40" style="font-size:18px">if(re(z)<-5,true,&#13;&#10;if(abs(lambertw(-c^2/f(z,c)))>abs(c),&#13;&#10;true,false));
+                </textarea>
+                </div>
+            </th>
+        </tr>
+    </table>
+    <br><br><br>
+</html>
