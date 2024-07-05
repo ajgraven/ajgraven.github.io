@@ -17,8 +17,8 @@
         <script id="csinit" type="text/x-cindyscript">
             use("CindyGL");
 
-            e = 2.718281828;
-            n = 20;
+            e = 2.71828182845904523536028747;
+            n = 30;
             C0 = 1;
 
             // Parameter space plot coordinate transformations
@@ -152,21 +152,23 @@
             c = mCanvToPltZ(complex(C));
 
             mShift(ratio,dir) := ( //Translates parameter space window by ratio of window width/height
+                Cpos = C.xy;
                 if(dir=="horizontal",
                     shift = (mandelmaxx-mandelminx)*ratio;
                     mandelminxtemp = mandelminx + shift;
                     mandelmaxx = mandelmaxx + shift;
                     mandelminx = mandelminxtemp;
-                    C.x = mPltToCanvX(re(c));,
+                    C.x = Cpos_1,
                     shift = (mandelmaxy-mandelminy)*ratio;
                     mandelminytemp = mandelminy + shift;
                     mandelmaxy = mandelmaxy + shift;
                     mandelminy = mandelminytemp;
-                    C.y = mPltToCanvY(im(c));
+                    C.y = Cpos_2;
                 );
             );
 
             mZoom(ratio) := ( //Zooms parameter space window by ratio of window width/height
+                Cpos = C.xy;
                 cx = (mandelmaxx+mandelminx)/2;
                 cy = (mandelmaxy+mandelminy)/2;
                 mxminc = (mandelminx-cx)*ratio;
@@ -177,27 +179,27 @@
                 mandelmaxx = mxmaxc + cx;
                 mandelminy = myminc + cy;
                 mandelmaxy = mymaxc + cy;
-                C.xy = reim(mPltToCanvZ(c));
+                C.xy = Cpos;
             );
 
             jShift(ratio,dir) := ( //Translates parameter space window by ratio of window width/height
-                Ipos = jCanvToPltZ(complex(I.xy));
+                Ipos = I.xy;
                 if(dir=="horizontal",
                     shift = (jmaxx-jminx)*ratio;
                     jminxtemp = jminx + shift;
                     jmaxx = jmaxx + shift;
                     jminx = jminxtemp;
-                    I.x = jPltToCanvX(re(Ipos));,
+                    I.x = Ipos_1,
                     shift = (jmaxy-jminy)*ratio;
                     jminytemp = jminy + shift;
                     jmaxy = jmaxy + shift;
                     jminy = jminytemp;
-                    I.y = jPltToCanvY(im(Ipos));
+                    I.y = Ipos_2;
                 );
             );
 
             jZoom(ratio) := ( //Zooms parameter space window by ratio of window width/height
-                Ipos = jCanvToPltZ(complex(I.xy));
+                Ipos = I.xy;
                 cx = (jmaxx+jminx)/2;
                 cy = (jmaxy+jminy)/2;
                 jxminc = (jminx-cx)*ratio;
@@ -208,7 +210,7 @@
                 jmaxx = jxmaxc + cx;
                 jminy = jyminc + cy;
                 jmaxy = jymaxc + cy;
-                I.xy = reim(jPltToCanvZ(Ipos));
+                I.xy = Ipos;
             );
 
         
@@ -220,7 +222,7 @@
            colorplot([jminx,jminy],[jmaxx,jminy],"julia",color(juliaiter(complex(#), c)));
 
            drawimage([jcanvminx,jcanvminy],[jcanvmaxx,jcanvminy], "julia");
-           connect(apply(julianiter(jCanvToPltZ(complex(I.xy)),c,5),reim(jPltToCanvZ(#))));
+           connect(apply(julianiter(jCanvToPltZ(complex(I.xy)),c,8),reim(jPltToCanvZ(#))));
            drawimage([mandelcanvminx,mandelcanvminy],[mandelcanvmaxx,mandelcanvminy], "mandel");
            drawtext(C+(.015,.015), "c="+c, color->[0,0,0],size->15);
            drawtext(I+(.015,.015), jCanvToPltZ(complex(I.xy)), color->[0,0,0],size->15);
@@ -377,7 +379,7 @@
         <tr style="vertical-align: top;">
             <th>
                 <div style="text-align:center;position:relative;display:inline-block;">
-                <p>max # iterations</p><input type="text"     id="inpn" value="20"  onblur="setn(event, this)" size="5" style="font-size:18px">
+                <p>max # iterations</p><input type="text"     id="inpn" value="30"  onblur="setn(event, this)" size="5" style="font-size:18px">
             </div>
             </th>
         </tr>
@@ -503,5 +505,14 @@
             </th>
         </tr>
     </table>
+    <h4>Instructions</h4>
+    <ul>
+        <li>The left plot is the parameter space and the right is the dynamical plane.</li>
+        <li>The black point in the parameter space plot can be dragged to change the value of c used in the dynamical plane plot.</li>
+        <li>The blue point in the dynamical plane is the starting point for a plot of the first 8 iterates, and can also be dragged.</li>
+        <li>The arrows and +/- buttons below each plot may be used to translate and zoom in/out the region in view.</li>
+        <li>The text boxes below the plots may be used to edit the function to be iterated, as well as the escape condition. (there are separate escape condition boxes for the dynamical plane and the parameter space to ameliorate problems of numerical stability in the default example)</li>
+        <li>Click anywhere outside a given text box to apply the changes.</li>
+    </ul>
     <br><br><br>
 </html>
