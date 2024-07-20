@@ -36,6 +36,7 @@ var mcdy = CindyJS({
             transform: [{ visibleRect: [0,0,2,2] }],
         },
     ],
+    import: ["csinit.cjs"],
 });
 
 
@@ -52,6 +53,7 @@ var jcdy = CindyJS({
             transform: [{ visibleRect: [0,0,2,2] }],
         },
     ],
+    import: ["csinit.cjs"],
 });
 
 var update_cindyvars=function(f,c,n,mesc,jesc){
