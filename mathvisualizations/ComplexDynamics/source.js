@@ -1,9 +1,9 @@
 var preset_dict = {
-  "mandelbrot":     {f:"z^2+c",             c:'-.7-.4*i', n:'50', escape:"abs(z)>2", paramescape:"abs(z)>2",
+  "mandelbrot":     {f:"z^2+c",             c:'-.7-.4*i', n:'100', escape:"abs(z)>2", paramescape:"abs(z)>2",
                      plimits:[-2.1,.8,-1.45,1.45],  jlimits:[-2,2,-2,2]},
   "tricorn":        {f:"conjugate(z^2)+c",  c:'-0.488 + i*0.128',    n:'50', escape:"abs(z)>2", paramescape:"abs(z)>2",
                      plimits:[-2,2,-2,2],           jlimits:[-2,2,-2,2]},
-  "burning ship":   {f:"(abs(re(z))+i*abs(im(z)))^2-c", c:'1.6185 + i*0.0471', n:'50', escape:"abs(z)>2", paramescape:"abs(z)>2", plimits:[1.6,1.8,-.05,.15], jlimits:[-2,2,-2,2]},
+  "burning ship":   {f:"(abs(re(z))+i*abs(im(z)))^2-c", c:'1.6185 + i*0.0471', n:'100', escape:"abs(z)>2", paramescape:"abs(z)>2", plimits:[1.6,1.8,-.05,.15], jlimits:[-2,2,-2,2]},
   "exponential map":{f:"c*e^(z-1)", c:'1', n:'25', escape:'re(log(c)+z)>3000', paramescape:'re(log(c)+z)>3000',
                      plimits:[-1,5,-3,3],           jlimits:[-1,11,-6,6]},
   "exp Schwarz":    {f:"c0 = c^2/z;c1 = lambertw(-c0);conjugate(c0/exp(c1+c^2/c1));",             c:'1+0*i',    n:'50', escape:"if(re(z)<-5,true,if(abs(lambertw(-c^2/f(z,c)))>abs(c),true,false));",
@@ -22,7 +22,6 @@ var gslp2 = [
     { name: "I", kind: "P", type: "Free", pos: [2/3,1], size: 3 },
 ];
 
-
 var mcdy = CindyJS({
     canvasname: "MCSCanvas",
     scripts: "mcs*",
@@ -35,8 +34,7 @@ var mcdy = CindyJS({
             height: 500,
             transform: [{ visibleRect: [0,0,2,2] }],
         },
-    ],
-    import: ["csinit.cjs"],
+    ]
 });
 
 
@@ -52,8 +50,7 @@ var jcdy = CindyJS({
             height: 500,
             transform: [{ visibleRect: [0,0,2,2] }],
         },
-    ],
-    import: ["csinit.cjs"],
+    ]
 });
 
 var update_cindyvars=function(f,c,n,mesc,jesc){
@@ -88,6 +85,7 @@ var apply_preset=function(){
   document.getElementById('inpje').value = params.escape;
   apply_changes();
 }
+
 
 var updatec=function(cval){
     jcdy.evokeCS('c=complex([' + cval[0] + ',' + cval[1] + ']);');
@@ -201,3 +199,4 @@ var jzoomout=function(){
     jcdy.evokeCS("jZoom(3/2);");
   //}
 }
+

@@ -4,9 +4,9 @@ use("CindyGL");
 e = 2.71828182845904523536028747; // Euler's number
 
 // Initial values of constants
-n = 50; // number of iterates to use when generating image
+n = 100; // number of iterates to use when generating image
 c = -.7-.4*i; // initial value of c
-nplot = 6; // number of iterates to plot
+nplot = 8; // number of iterates to plot
 
 
 
@@ -36,11 +36,7 @@ f(z, c) := (
     z^2+c;
 );
 
-color(u) := (
-    //hue(re(log(1+(e-1)*(u/n))));
-    u = n-u;
-    (re(log(u+1)/log(n+1)),(u/n)^2,.3)
-);
+
 
 
 
@@ -53,6 +49,7 @@ mandelcanvminx = 0;
 mandelcanvminy = 0;
 mandelcanvmaxx = 2;
 mandelcanvmaxy = 2;
+
 
 
 mPltToCanvX(x) := (x-mandelminx)*((mandelcanvmaxx-mandelcanvminx)/(mandelmaxx-mandelminx))+mandelcanvminx; // plot coordinate to canvas coordinate
@@ -151,13 +148,7 @@ julianiter(z,c,k) := ( // returns first k iterates of dynamical plane starting a
     append(zs,f(z,c));
 );
 
-
-
-//Generate images
-if(C==C,
-    C.xy = reim(mPltToCanvZ(c));
-    // parameter space script
-    mShift(ratio,dir) := ( //Translates parameter space window by ratio of window width/height
+mShift(ratio,dir) := ( //Translates parameter space window by ratio of window width/height
         Cpos = C.xy;
         if(dir=="horizontal",
             shift = (mandelmaxx-mandelminx)*ratio;
@@ -186,10 +177,7 @@ if(C==C,
         mandelmaxy = mymaxc + cy;
         C.xy = Cpos;
     );
-    c = mCanvToPltZ(complex(C));
-    C.color  = (0,0,1);
-    createimage("mandel", 800, 800);, 
-    // dynamical plane script
+
     jShift(ratio,dir) := ( //Translate parameter space window by ratio of window width/height
         Ipos = I.xy;
         if(dir=="horizontal",
@@ -219,6 +207,15 @@ if(C==C,
         jmaxy = jymaxc + cy;
         I.xy = Ipos;
     );
-    I.color  = (0,0,1);
-    createimage("julia", 800, 800) 
+
+
+//Generate images
+if(C==C,
+    C.xy = reim(mPltToCanvZ(c));
+    c = mCanvToPltZ(complex(C));
+    C.color  = (1,1,1);
+    createimage("mandel", 800, 800);
+    , 
+    I.color  = (1,1,1);
+    createimage("julia", 800, 800);
 );
