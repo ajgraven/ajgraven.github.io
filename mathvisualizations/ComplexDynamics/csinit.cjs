@@ -39,36 +39,6 @@ f(z, c) := (
 
 
 
-
-// Parameter space plot coordinate transformations
-mandelminx = -2.1;
-mandelminy = -1.45;
-mandelmaxx = .8;
-mandelmaxy = 1.45;
-mandelcanvminx = 0;
-mandelcanvminy = 0;
-mandelcanvmaxx = 2;
-mandelcanvmaxy = 2;
-
-
-
-mPltToCanvX(x) := (x-mandelminx)*((mandelcanvmaxx-mandelcanvminx)/(mandelmaxx-mandelminx))+mandelcanvminx; // plot coordinate to canvas coordinate
-mPltToCanvY(y) := (y-mandelminy)*((mandelcanvmaxy-mandelcanvminy)/(mandelmaxy-mandelminy))+mandelcanvminy; // plot coordinate to canvas coordinate
-mPltToCanvZ(z) := mPltToCanvX(re(z))+i*mPltToCanvY(im(z)); // plot coordinate to canvas coordinate
-
-mCanvToPltX(x) := (x-mandelcanvminx)*((mandelmaxx-mandelminx)/(mandelcanvmaxx-mandelcanvminx))+mandelminx; // canvas coordinate to plot coordinate
-mCanvToPltY(y) := (y-mandelcanvminy)*((mandelmaxy-mandelminy)/(mandelcanvmaxy-mandelcanvminy))+mandelminy; // canvas coordinate to plot coordinate
-mCanvToPltZ(z) := mCanvToPltX(re(z))+i*mCanvToPltY(im(z)); // canvas coordinate to plot coordinate
-
-setMandelWindow(arr) := (
-    mandelminx = arr_1;
-    mandelmaxx = arr_2;
-    mandelminy = arr_3;
-    mandelmaxy = arr_4;
-);
-
-
-
 // Dynamical plane plot coordinate transformations
 jminx = -2;
 jminy = -2;
@@ -80,12 +50,12 @@ jcanvmaxx = 2;
 jcanvmaxy = 2;
 
 
-jPltToCanvX(x) := (x-jminx)*((jcanvmaxx-jcanvminx)/(jmaxx-jminx))+jcanvminx; // plot coordinate to canvas coordinate
-jPltToCanvY(y) := (y-jminy)*((jcanvmaxy-jcanvminy)/(jmaxy-jminy))+jcanvminy; // plot coordinate to canvas coordinate
+jPltToCanvX(x) := (x-jminx)*(2/(jmaxx-jminx)); // plot coordinate to canvas coordinate
+jPltToCanvY(y) := (y-jminy)*(2/(jmaxy-jminy)); // plot coordinate to canvas coordinate
 jPltToCanvZ(z) := jPltToCanvX(re(z))+i*jPltToCanvY(im(z)); // plot coordinate to canvas coordinate
 
-jCanvToPltX(x) := (x-jcanvminx)*((jmaxx-jminx)/(jcanvmaxx-jcanvminx))+jminx; // canvas coordinate to plot coordinate
-jCanvToPltY(y) := (y-jcanvminy)*((jmaxy-jminy)/(jcanvmaxy-jcanvminy))+jminy; // canvas coordinate to plot coordinate
+jCanvToPltX(x) := x*(jmaxx-jminx)/2+jminx; // canvas coordinate to plot coordinate
+jCanvToPltY(y) := y*(jmaxy-jminy)/2+jminy; // canvas coordinate to plot coordinate
 jCanvToPltZ(z) := jCanvToPltX(re(z))+i*jCanvToPltY(im(z)); // canvas coordinate to plot coordinate
 
 setJuliaWindow(arr) := (
@@ -100,10 +70,6 @@ juliaescape(z, c) := (
     abs(z)>2;
 );
 
-mandelescape(z, c) := (
-    abs(z)>2;
-);
-
 juliaiter(z, c) := ( //returns the number of iterates to escape for dynamical plane, or n (max) if escape fails
     kmax=0;
     repeat(n,k,
@@ -115,27 +81,6 @@ juliaiter(z, c) := ( //returns the number of iterates to escape for dynamical pl
 );
 
 
-mandeliter(z, c) := ( //returns the number of iterates to escape for dynamical plane, or n (max) if escape fails
-    kmax=0;
-    repeat(n,k,
-        if(not(mandelescape(z,c)),
-            z = f(z,c);
-            kmax=k;
-        );
-    );
-);
-
-mandelniter(c,k) := ( // returns first k iterates of dynamical plane starting at z
-    zs = [c];
-    z = c;
-    repeat(k,l,
-        if(not(mandelescape(z,c)),
-            z = f(z,c);
-            zs=append(zs,z);
-        );
-    );
-    append(zs,f(z,c));
-);
 
 julianiter(z,c,k) := ( // returns first k iterates of dynamical plane starting at z
     zs = [z];
@@ -148,74 +93,40 @@ julianiter(z,c,k) := ( // returns first k iterates of dynamical plane starting a
     append(zs,f(z,c));
 );
 
-mShift(ratio,dir) := ( //Translates parameter space window by ratio of window width/height
-        Cpos = C.xy;
-        if(dir=="horizontal",
-            shift = (mandelmaxx-mandelminx)*ratio;
-            mandelminxtemp = mandelminx + shift;
-            mandelmaxx = mandelmaxx + shift;
-            mandelminx = mandelminxtemp;
-            C.x = Cpos_1,
-            shift = (mandelmaxy-mandelminy)*ratio;
-            mandelminytemp = mandelminy + shift;
-            mandelmaxy = mandelmaxy + shift;
-            mandelminy = mandelminytemp;
-            C.y = Cpos_2;
-        );
-    );
-    mZoom(ratio) := ( //Zoom parameter space window by ratio of window width/height
-        Cpos = C.xy;
-        cx = (mandelmaxx+mandelminx)/2;
-        cy = (mandelmaxy+mandelminy)/2;
-        mxminc = (mandelminx-cx)*ratio;
-        mxmaxc = (mandelmaxx-cx)*ratio;
-        myminc = (mandelminy-cy)*ratio;
-        mymaxc = (mandelmaxy-cy)*ratio;
-        mandelminx = mxminc + cx;
-        mandelmaxx = mxmaxc + cx;
-        mandelminy = myminc + cy;
-        mandelmaxy = mymaxc + cy;
-        C.xy = Cpos;
-    );
 
-    jShift(ratio,dir) := ( //Translate parameter space window by ratio of window width/height
-        Ipos = I.xy;
-        if(dir=="horizontal",
-            shift = (jmaxx-jminx)*ratio;
-            jminxtemp = jminx + shift;
-            jmaxx = jmaxx + shift;
-            jminx = jminxtemp;
-            I.x = Ipos_1,
-            shift = (jmaxy-jminy)*ratio;
-            jminytemp = jminy + shift;
-            jmaxy = jmaxy + shift;
-            jminy = jminytemp;
-            I.y = Ipos_2;
-        );
+
+jShift(ratio,dir) := ( //Translate parameter space window by ratio of window width/height
+    Z0pos = Z0.xy;
+    if(dir=="horizontal",
+        shift = (jmaxx-jminx)*ratio;
+        jminxtemp = jminx + shift;
+        jmaxx = jmaxx + shift;
+        jminx = jminxtemp;
+        Z0.x = Z0pos_1,
+        shift = (jmaxy-jminy)*ratio;
+        jminytemp = jminy + shift;
+        jmaxy = jmaxy + shift;
+        jminy = jminytemp;
+        Z0.y = Z0pos_2;
     );
-    jZoom(ratio) := ( //Zooms parameter space window by ratio of window width/height
-        Ipos = I.xy;
-        cx = (jmaxx+jminx)/2;
-        cy = (jmaxy+jminy)/2;
-        jxminc = (jminx-cx)*ratio;
-        jxmaxc = (jmaxx-cx)*ratio;
-        jyminc = (jminy-cy)*ratio;
-        jymaxc = (jmaxy-cy)*ratio;
-        jminx = jxminc + cx;
-        jmaxx = jxmaxc + cx;
-        jminy = jyminc + cy;
-        jmaxy = jymaxc + cy;
-        I.xy = Ipos;
-    );
+);
+
+jZoom(ratio) := ( //Zooms parameter space window by ratio of window width/height
+    Z0pos = Z0.xy;
+    cx = (jmaxx+jminx)/2;
+    cy = (jmaxy+jminy)/2;
+    jxminc = (jminx-cx)*ratio;
+    jxmaxc = (jmaxx-cx)*ratio;
+    jyminc = (jminy-cy)*ratio;
+    jymaxc = (jmaxy-cy)*ratio;
+    jminx = jxminc + cx;
+    jmaxx = jxmaxc + cx;
+    jminy = jyminc + cy;
+    jmaxy = jymaxc + cy;
+    Z0.xy = Z0pos;
+);
 
 
 //Generate images
-if(C==C,
-    C.xy = reim(mPltToCanvZ(c));
-    c = mCanvToPltZ(complex(C));
-    C.color  = (1,1,1);
-    createimage("mandel", 800, 800);
-    , 
-    I.color  = (1,1,1);
-    createimage("julia", 800, 800);
-);
+Z0.color  = (1,1,1);
+createimage("julia", 800, 800);
