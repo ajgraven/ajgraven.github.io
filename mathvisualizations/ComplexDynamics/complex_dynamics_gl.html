@@ -17,9 +17,12 @@
 
         <script src="source.js" type="text/javascript"></script>
         <script type="text/javascript">
-            var julia_fract = new FractalPlot("julia_fract",dyn_preset_dict["mandelbrot"],"JCSCanvas","JCSCanvas",{},"dyn",500,500);
+            var julia_fract = new FractalPlot("julia_fract",dyn_preset_dict["mandelbrot"],"JCSCanvas","JCSCanvas",
+                {keydown: ['setDZoomInput(julia_fract.zoom)','setDCenterInput(julia_fract.center)']}
+                ,"dyn",500,500);
             var parameter_fract = new FractalPlot("parameter_fract",param_preset_dict["mandelbrot"],"MCSCanvas","MCSCanvas",
-                {move:['julia_fract.c = complex(parameter_fract.z0)']},
+                {move:    ['julia_fract.c = complex(parameter_fract.z0)'],
+                 keydown: ['setPZoomInput(parameter_fract.zoom)','setPCenterInput(parameter_fract.center)']},
                 "param",500,500);
         </script>
 
@@ -39,13 +42,13 @@
                         <th>
                             <label for="inpparamcenter">center</label><br>
                             <div style="text-align:center;position:relative;display:inline-block;">
-                                <input type="text"     id="inpparamcenter" placeholder="-.75,0" value="-.75,0" size="7" style="font-size:15px">
+                                <input type="text"     id="inpparamcenter" placeholder="-.75,0" value="-.75,0" size="14" style="font-size:15px">
                             </div>
                         </th>
                         <th>
                             <label for="inpparamzoom">zoom</label><br>
                             <div style="text-align:center;position:relative;display:inline-block;">
-                                <input type="text"     id="inpparamzoom" placeholder=".75" value=".75" size="7" style="font-size:15px">
+                                <input type="text"     id="inpparamzoom" placeholder=".75" value=".75" size="14" style="font-size:15px">
                             </div>
                         </th>
                     </tr>
@@ -65,13 +68,13 @@
                         <th>
                             <label for="inpdyncenter">center</label><br>
                             <div style="text-align:center;position:relative;display:inline-block;">
-                                <input type="text"     id="inpdyncenter" placeholder="0,0" value="0,0" size="7" style="font-size:15px">
+                                <input type="text"     id="inpdyncenter" placeholder="0,0" value="0,0" size="14" style="font-size:15px">
                             </div>
                         </th>
                         <th>
                             <label for="inpdynzoom">zoom</label><br>
                             <div style="text-align:center;position:relative;display:inline-block;">
-                                <input type="text"     id="inpdynzoom" placeholder=".65" value=".65" size="7" style="font-size:15px">
+                                <input type="text"     id="inpdynzoom" placeholder=".65" value=".65" size="14" style="font-size:15px">
                             </div>
                         </th>
                     </tr>
@@ -134,9 +137,10 @@
                                         <select id="fractal_presets" style="font-size:15px">
                                             <option value="mandelbrot">Mandelbrot set</option>
                                             <option value="tricorn">tricorn</option>
+                                            <option value="burning ship">burning ship</option>
+                                            <option value="butterfly">butterfly</option>
                                             <option value="exponential map">exponential map</option>
                                             <option value="exp Schwarz">exp Schwarz</option>
-                                            <option value="burning ship">burning ship</option>
                                         </select>
                                     </th>
                                     <th>
