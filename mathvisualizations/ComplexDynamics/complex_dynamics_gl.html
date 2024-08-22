@@ -10,6 +10,7 @@
         <script type="text/javascript" src="../../assets/js/Cindy.js"></script>
         <script type="text/javascript" src="../../assets/js/CindyGL.js"></script>
         <link rel="stylesheet" href="../../assets/css/CindyJS.css" />
+        <link rel="icon" href="../../images/favicon.ico">
     </head>
 
     <body style="font-family: Arial">
@@ -18,11 +19,15 @@
         <script src="source.js" type="text/javascript"></script>
         <script type="text/javascript">
             var julia_fract = new FractalPlot("julia_fract",dyn_preset_dict["mandelbrot"],"JCSCanvas","JCSCanvas",
-                {keydown: ['setDZoomInput(julia_fract.zoom)','setDCenterInput(julia_fract.center)']}
+                {
+                    keydown: ['setDZoomInput(julia_fract.zoom)','setDCenterInput(julia_fract.center)']
+                }
                 ,"dyn",500,500);
             var parameter_fract = new FractalPlot("parameter_fract",param_preset_dict["mandelbrot"],"MCSCanvas","MCSCanvas",
-                {move:    ['julia_fract.c = complex(parameter_fract.z0)'],
-                 keydown: ['setPZoomInput(parameter_fract.zoom)','setPCenterInput(parameter_fract.center)']},
+                {
+                    move:    ['julia_fract.c = complex(parameter_fract.z0)','setCInput(parameter_fract.z0)'],
+                    keydown: ['setPZoomInput(parameter_fract.zoom)','setPCenterInput(parameter_fract.center)']
+                },
                 "param",500,500);
         </script>
 

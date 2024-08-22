@@ -134,13 +134,13 @@ class FractalPlot {
         this._movescript = 'colorplot([center_1-1/zoom,center_2-1/zoom],[center_1+1/zoom,center_2-1/zoom],"julia",colorFcn(dynIter(complex(#), c)));' +
         'drawimage([0,0],[2,0], "julia");' +
         'connect(apply(dynKIter(CanvToPltZ(complex(Z0.xy)),c,nplot),reim(PltToCanvZ(#))),color->[1,1,1],size->1.8);' +
-        'drawtext(Z0+(.015,.015), "z="+CanvToPltZ(complex(Z0.xy)), color->[1,1,1],size->15);';
+        'drawtext(Z0+(.025,.025), "z0="+CanvToPltZ(complex(Z0.xy)), color->[1,1,1],size->15);';
         break;
       case "param":
         this._movescript = 'colorplot([center_1-1/zoom,center_2-1/zoom],[center_1+1/zoom,center_2-1/zoom],"julia",colorFcn(paramIter(complex(#))));' +
         'drawimage([0,0],[2,0], "julia");' +
         'connect(apply(paramKIter(CanvToPltZ(complex(Z0.xy)),nplot),reim(PltToCanvZ(#))),color->[1,1,1],size->1.8);' +
-        'drawtext(Z0+(.015,.015), "z="+CanvToPltZ(complex(Z0.xy)), color->[1,1,1],size->15);';
+        'drawtext(Z0+(.025,.025), "c="+CanvToPltZ(complex(Z0.xy)), color->[1,1,1],size->15);';
         break;
     }
     if ("move" in this._callbacks) {
@@ -173,7 +173,9 @@ class FractalPlot {
     this.f = preset.f;
     this.n = preset.n;
     this.esc = preset.escape;
-    this.z0 = reim(this.c);
+    if(this._fractType === "param") {
+      this.z0 = reim(this.c);
+    }
   }
 
   CanvToPlot(z) {
@@ -317,7 +319,7 @@ var reim = function(z) {
 }
 
 var getCInput = function() {
-  return document.getElementById("inpc").value;
+  return complex(document.getElementById("inpc").value.split(","));
 }
 
 var getNInput = function() {
@@ -355,6 +357,7 @@ var getDZoomInput = function() {
 //////////
 
 var setCInput = function(cval) {
+  cval = cval.map(vals => vals.toPrecision(6)).map(parseFloat);
   document.getElementById("inpc").value = cval;
 }
 
@@ -400,7 +403,7 @@ var apply_changes = function() {
 
 var getPresetDicts = function() {
   return [{f:getFInput(), c:getCInput(), n:getNInput(), escape:getPEscInput(), zoom: getPZoomInput(), center: getPCenterInput()},
-          {f:getFInput(), c:getCInput(), n:getNInput(), escape:getDEscInput(), zoom: getDZoomInput(), center: getDCenterInput()}];
+          {f:getFInput(), c:julia_fract.c, n:getNInput(), escape:getDEscInput(), zoom: getDZoomInput(), center: getDCenterInput()}];
 }
 
 
