@@ -15,7 +15,7 @@ var dyn_preset_dict = {
   "exp Schwarz":    {f:"c0 = c^2/z;c1 = lambertw(-c0);conjugate(c0/exp(c1+c^2/c1));", c:'2.92-.48*i', n:'50', escape:"if(re(z)<-5,true,if(abs(lambertw(-c^2/f(z,c)))>abs(c),true,false));", center:[6,0], zoom:.15}
 };
 
-var iniscript = function(preset) {
+var iniscript = function(preset,res) {
   return `
   use("CindyGL");
 
@@ -107,19 +107,20 @@ var iniscript = function(preset) {
   );
 
   //Generate image
-  createimage("julia", 500, 500);
+  createimage("julia", ${res}, ${res});
   `
 }
 
 
 class FractalPlot {
-  constructor(varName, paramDict, canvasName, canvasID, callbacks = {}, fractType = "dyn", canvasWidth = 500, canvasHeight = 500) {
+  constructor(varName, paramDict, canvasName, canvasID, callbacks = {}, fractType = "dyn", canvasWidth = 500, canvasHeight = 500, res = 500) {
     this._varName = varName;
     this._canvasName = canvasName;
     this._canvasID = canvasID;
     this._fractType = fractType;
     this._canvasWidth = canvasWidth;
     this._canvasHeight = canvasHeight;
+    this._res = res; // resolution
     this._callbacks = callbacks;
     this._c = paramDict.c;
     this._f = paramDict.f;
@@ -153,7 +154,7 @@ class FractalPlot {
     this._cindy = CindyJS({
       canvasname: this._canvasName,
       scripts: {
-        init: iniscript(paramDict),
+        init: iniscript(paramDict,this._res),
         move: this._movescript,
         keydown: this._keydownscript
       },
@@ -244,6 +245,11 @@ class FractalPlot {
     this._cindy.evokeCS(str);
   }
 
+  set res(resVal) {
+    this._res = resVal;
+    this._cindy.evokeCS(`createimage("julia", ${this._res}, ${this._res})`);
+  }
+
 
   get z0() {
     this._cindy.evokeCS('javascript("' + this._varName + '._z0 = ' + this._varName + '.CanvToPlot("+Z0.xy+")");');
@@ -281,6 +287,10 @@ class FractalPlot {
   get range() {
     return [this._center[0]-1/this._zoom,this._center[0]+1/this._zoom,
             this._center[1]-1/this._zoom,this._center[1]+1/this._zoom];
+  }
+
+  get res() {
+    return this._res;
   }
 
 }
