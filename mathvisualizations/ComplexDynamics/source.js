@@ -422,7 +422,7 @@ var apply_preset = function(preset_val) {
   setPZoomInput(param_preset_dict[preset_val].zoom);
   setDCenterInput(dyn_preset_dict[preset_val].center);
   setDZoomInput(dyn_preset_dict[preset_val].zoom);
-  setCInput(param_preset_dict[preset_val].c);
+  setCInput(reim(param_preset_dict[preset_val].c));
   setNInput(param_preset_dict[preset_val].n);
   setFInput(param_preset_dict[preset_val].f);
   setPEscInput(param_preset_dict[preset_val].escape);
