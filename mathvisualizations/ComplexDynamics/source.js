@@ -128,13 +128,13 @@ function arraymult(arr,m){ // multiply an array by a scalar
 
 class FractalPlot {
   constructor(varName, paramDict, canvasName, canvasID, callbacks = {}, fractType = "dyn", canvasWidth = 500, canvasHeight = 500, res = 500) {
-    this._varName = varName; // object instance variable name
-    this._canvasName = canvasName; // name of javascript canvas
-    this._canvasID = canvasID; // canvas ID
+    this._varName = varName; // object instance variable name (string)
+    this._canvasName = canvasName; // name of javascript canvas (string)
+    this._canvasID = canvasID; // canvas ID (string)
     this._fractType = fractType; // type of fractal (either "dyn" for dynamical plane or "param" for parameter space)
-    this._canvasWidth = canvasWidth; // canvas width in pixels
-    this._canvasHeight = canvasHeight; // canvas height in pixels
-    this._res = res; // resolution (res x res)
+    this._canvasWidth = canvasWidth; // canvas width in pixels (int)
+    this._canvasHeight = canvasHeight; // canvas height in pixels (int)
+    this._res = res; // resolution (res x res) (int)
     this._callbacks = callbacks;
     this._c = paramDict.c; // value of c. string of the form a+b*i
     this._f = paramDict.f; // iteration expression (string) f(z,c)="this._f" 
@@ -147,12 +147,12 @@ class FractalPlot {
     this._mouseshift = [0,0]; //shift vector for change in mouse position (in canvas coordinates)
     this._isPtSelected = false;
     this._z0AtMouse = false;
-    this._movescript = '';
-    this._keydownscript = '';
-    this._mousemovescript = '';
-    this._mouseclickscript = '';
-    this._mousedownscript = '';
-    this._mousedragscript = '';
+    this._movescript = ''; // list of lines of JS code (strings) to be executed when any element of the canvas moves
+    this._keydownscript = ''; // list of lines of JS code (strings) to be executed when a key is pressed
+    this._mousemovescript = ''; // list of lines of JS code (strings) to be executed when the mouse is moved
+    this._mouseclickscript = ''; // list of lines of JS code (strings) to be executed when the mouse is clicked
+    this._mousedownscript = ''; // list of lines of JS code (strings) to be executed when the mouse is clicked down
+    this._mousedragscript = ''; // list of lines of JS code (strings) to be executed repeatedly when the mouse is being dragged
     switch(this._fractType) {
       case "dyn":
         this._movescript = 'colorplot([center_1-1/zoom,center_2-1/zoom],[center_1+1/zoom,center_2-1/zoom],"julia",colorFcn(dynIter(complex(#), c)));' +
@@ -167,24 +167,30 @@ class FractalPlot {
         'drawtext(Z0+(.025,.025), "c="+CanvToPltZ(complex(Z0.xy)), color->[1,1,1],size->15);';
         break;
     }
+    this._keydownscript   = 'javascript("' + this._varName + '.keypress(\'"+"\\" + key()+"\'.charCodeAt(0))");';
+    this._mousedragscript = `javascript("
+      if (!(${this._varName}.z0AtMouse)) {
+        ${this._varName}.shift(arraymult(${this._varName}.mouseshift,1/${this._varName}.zoom));
+      }");
+      `;
+    this._mousedownscript = `javascript("${this._varName}.mouseshift === null");`; // fixes timing issue with click and drag feature
     if ("move" in this._callbacks) {
-      this._movescript += 'javascript("' + this._callbacks.move.join("; ") +';");';
+      this._movescript += GenCindyJSCode(this._callbacks.move);
     }
-    this._keydownscript = 'javascript("' + this._varName + '.keypress(\'"+"\\" + key()+"\'.charCodeAt(0))");';
     if ("keydown" in this._callbacks) {
-      this._keydownscript += 'javascript("' + this._callbacks.keydown.join("; ") +';");';
+      this._keydownscript += GenCindyJSCode(this._callbacks.keydown);
     }
     if ("mousedrag" in this._callbacks) {
-      this._mousedragscript += 'javascript("' + this._callbacks.mousedrag.join("; ") +';");';
+      this._mousedragscript += GenCindyJSCode(this._callbacks.mousedrag);
     }
     if ("mousedown" in this._callbacks) {
-      this._mousedownscript += 'javascript("' + this._callbacks.mousedown.join("; ") +';");';
+      this._mousedownscript += GenCindyJSCode(this._callbacks.mousedown);
     }
     if ("mousemove" in this._callbacks) {
-      this._mousemovescript += 'javascript("' + this._callbacks.mousemove.join("; ") +';");';
+      this._mousemovescript += GenCindyJSCode(this._callbacks.mousemove);
     }
     if ("mouseclick" in this._callbacks) {
-      this._mouseclickscript += 'javascript("' + this._callbacks.mouseclick.join("; ") +';");';
+      this._mouseclickscript += GenCindyJSCode(this._callbacks.mouseclick);
     }
     this._cindy = CindyJS({
       canvasname: this._canvasName,
@@ -235,7 +241,7 @@ class FractalPlot {
   }
 
   shift(vec) {
-    this.center = [this._center[0] + vec[0],this._center[1] + vec[1]];
+    this.center = addarrays(this._center,vec);
   }
 
 
@@ -256,58 +262,58 @@ class FractalPlot {
 
   set z0(z0Val) {
     this._z0 = z0Val;
-    this._cindy.evokeCS('Z0.xy=[' + this.PlotToCanv(this._z0) + '];');
+    this.evokeCS(`Z0.xy=[${this.PlotToCanv(this._z0)}];`);
   }
 
   set c(cval) {
     this._c = cval;
-    this._cindy.evokeCS('c=' + this._c + ';');
+    this.evokeCS(`c=${this._c};`);
   }
 
   set f(fval) {
     this._f = fval;
-    this._cindy.evokeCS('f(z,c) := (' + this._f + ');');
+    this.evokeCS(`f(z,c) := (${this._f});`);
   }
 
   set esc(escval) {
     this._esc = escval;
-    this._cindy.evokeCS('escape(z,c) := (' + this._esc + ');');
+    this.evokeCS(`escape(z,c) := (${this._esc});`);
   }
 
   set n(nval) {
     this._n = nval;
-    this._cindy.evokeCS('n=' + this._n + ';');
+    this.evokeCS(`n=${this._n};`);
   }
 
   set zoom(zoomval) {
     this._zoom = zoomval;
-    this._cindy.evokeCS('zoom=' + zoomval + ';');
+    this.evokeCS(`zoom=${zoomval};`);
   }
 
   set center(centerval) {
     this._center = centerval;
-    var str = 'center_1='+this._center[0]+';'+
-              'center_2='+this._center[1]+';';
-    this._cindy.evokeCS(str);
+    var str = `center_1=${this._center[0]};
+               center_2=${this._center[1]};`;
+    this.evokeCS(str);
   }
 
   set res(resVal) {
     this._res = resVal;
-    this._cindy.evokeCS(`createimage("julia", ${this._res}, ${this._res})`);
+    this.evokeCS(`createimage("julia", ${this._res}, ${this._res})`);
   }
 
   get z0AtMouse() {
-    this._cindy.evokeCS('javascript("' + this._varName + '._z0AtMouse = "+contains(elementsatmouse(),Z0)+";");');
+    this.evokeCS(`javascript("${this._varName}._z0AtMouse = "+contains(elementsatmouse(),Z0)+";");`);
     return this._z0AtMouse;
   }
 
   get isPtSelected() {
-    this._cindy.evokeCS('javascript("' + this._varName + '.isPtSelected = "+(mover() == Z0)+";");');
+    this.evokeCS(`javascript("${this._varName}.isPtSelected = "+(mover() == Z0)+";");`);
     return this._isPtSelected;
   }
 
   get mousepos() {
-    this._cindy.evokeCS('javascript("' + this._varName + '._mousepos = "+mouse());');
+    this.evokeCS(`javascript("${this._varName}._mousepos = "+mouse());`);
     return this._mousepos;
   }
 
@@ -317,7 +323,7 @@ class FractalPlot {
   }
 
   get z0() {
-    this._cindy.evokeCS('javascript("' + this._varName + '._z0 = ' + this._varName + '.CanvToPlot("+Z0.xy+")");');
+    this.evokeCS(`javascript("${this._varName}._z0 = ${this._varName}.CanvToPlot("+Z0.xy+")");`);
     return this._z0;
   }
 
@@ -359,6 +365,21 @@ class FractalPlot {
   }
 
 }
+
+
+/////////////////////
+
+// Generate string that calls the lines of JS code
+// takes in an array of strings where each is a line
+// of JS code (w/o semicolons)
+var GenCindyJSCode = function(arr) {
+  return  'javascript("' + arr.join("; ") +';");';
+}
+
+
+
+
+////////////////////
 
 var complex = function(zArr) {
   if (zArr[1] >= 0) {
