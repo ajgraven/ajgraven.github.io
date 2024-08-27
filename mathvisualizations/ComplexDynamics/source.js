@@ -61,10 +61,12 @@ var iniscript = function(preset,res) {
   // Coordinate transformations
   PltToCanvX(x) := (x-center_1)*zoom+1; // plot coordinate to canvas coordinate
   PltToCanvY(y) := (y-center_2)*zoom+1; // plot coordinate to canvas coordinate
+  PltToCanvXY(XY) := [PltToCanvX(XY_1),PltToCanvY(XY_2)];
   PltToCanvZ(z) := PltToCanvX(re(z))+i*PltToCanvY(im(z)); // plot coordinate to canvas coordinate
 
   CanvToPltX(x) := (x-1)/zoom+center_1; // canvas coordinate to plot coordinate
   CanvToPltY(y) := (y-1)/zoom+center_2; // canvas coordinate to plot coordinate
+  CanvToPltXY(XY) := [CanvToPltX(XY_1),CanvToPltY(XY_2)];
   CanvToPltZ(z) := CanvToPltX(re(z))+i*CanvToPltY(im(z)); // canvas coordinate to plot coordinate
 
 
@@ -111,25 +113,46 @@ var iniscript = function(preset,res) {
   `
 }
 
+function addarrays(a,b){ // add a pair of arrays elementwise
+    return a.map((e,i) => e + b[i]);
+}
+
+function subtractarrays(a,b){ // subtract a pair of arrays elementwise
+    return a.map((e,i) => e - b[i]);
+}
+
+function arraymult(arr,m){ // multiply an array by a scalar
+    return arr.map((e,i) => e*m);
+}
+
 
 class FractalPlot {
   constructor(varName, paramDict, canvasName, canvasID, callbacks = {}, fractType = "dyn", canvasWidth = 500, canvasHeight = 500, res = 500) {
-    this._varName = varName;
-    this._canvasName = canvasName;
-    this._canvasID = canvasID;
-    this._fractType = fractType;
-    this._canvasWidth = canvasWidth;
-    this._canvasHeight = canvasHeight;
-    this._res = res; // resolution
+    this._varName = varName; // object instance variable name
+    this._canvasName = canvasName; // name of javascript canvas
+    this._canvasID = canvasID; // canvas ID
+    this._fractType = fractType; // type of fractal (either "dyn" for dynamical plane or "param" for parameter space)
+    this._canvasWidth = canvasWidth; // canvas width in pixels
+    this._canvasHeight = canvasHeight; // canvas height in pixels
+    this._res = res; // resolution (res x res)
     this._callbacks = callbacks;
-    this._c = paramDict.c;
-    this._f = paramDict.f;
-    this._n = paramDict.n;
-    this._esc = paramDict.escape;
-    this._center = paramDict.center;
-    this._zoom = paramDict.zoom;
+    this._c = paramDict.c; // value of c. string of the form a+b*i
+    this._f = paramDict.f; // iteration expression (string) f(z,c)="this._f" 
+    this._n = paramDict.n; // maximum number of iterations per pixel
+    this._esc = paramDict.escape; // escape condition (string) escape(z,c)="this._escape"
+    this._center = paramDict.center; // center of plot (array)
+    this._zoom = paramDict.zoom; // default zoom level
     this._z0 = reim(paramDict.c);
-    this._movescript = null;
+    this._mousepos = [0,0]; // current position of mouse (in canvas coordinates)
+    this._mouseshift = [0,0]; //shift vector for change in mouse position (in canvas coordinates)
+    this._isPtSelected = false;
+    this._z0AtMouse = false;
+    this._movescript = '';
+    this._keydownscript = '';
+    this._mousemovescript = '';
+    this._mouseclickscript = '';
+    this._mousedownscript = '';
+    this._mousedragscript = '';
     switch(this._fractType) {
       case "dyn":
         this._movescript = 'colorplot([center_1-1/zoom,center_2-1/zoom],[center_1+1/zoom,center_2-1/zoom],"julia",colorFcn(dynIter(complex(#), c)));' +
@@ -151,12 +174,28 @@ class FractalPlot {
     if ("keydown" in this._callbacks) {
       this._keydownscript += 'javascript("' + this._callbacks.keydown.join("; ") +';");';
     }
+    if ("mousedrag" in this._callbacks) {
+      this._mousedragscript += 'javascript("' + this._callbacks.mousedrag.join("; ") +';");';
+    }
+    if ("mousedown" in this._callbacks) {
+      this._mousedownscript += 'javascript("' + this._callbacks.mousedown.join("; ") +';");';
+    }
+    if ("mousemove" in this._callbacks) {
+      this._mousemovescript += 'javascript("' + this._callbacks.mousemove.join("; ") +';");';
+    }
+    if ("mouseclick" in this._callbacks) {
+      this._mouseclickscript += 'javascript("' + this._callbacks.mouseclick.join("; ") +';");';
+    }
     this._cindy = CindyJS({
       canvasname: this._canvasName,
       scripts: {
         init: iniscript(paramDict,this._res),
-        move: this._movescript,
-        keydown: this._keydownscript
+        move:       this._movescript,
+        keydown:    this._keydownscript,
+        mousedrag:  this._mousedragscript,
+        mousedown:  this._mousedownscript,
+        mousemove:  this._mousemovescript,
+        mouseclick: this._mouseclickscript
       },
       geometry: [{name: "Z0", kind: "P", type: "Free", pos: this.PlotToCanv(this._z0), size: 3 }],
       ports: [{
@@ -165,6 +204,10 @@ class FractalPlot {
         height: this._canvasHeight,
         transform: [{ visibleRect: [0,2,2,0] }],},]
     });
+  }
+
+  evokeCS(cscode) {
+    this._cindy.evokeCS(cscode);
   }
 
   ApplyPreset(preset) {
@@ -207,6 +250,9 @@ class FractalPlot {
     }
   }
 
+  set isPtSelected(isSelected) {
+    this._isPtSelected = isSelected;
+  }
 
   set z0(z0Val) {
     this._z0 = z0Val;
@@ -250,6 +296,25 @@ class FractalPlot {
     this._cindy.evokeCS(`createimage("julia", ${this._res}, ${this._res})`);
   }
 
+  get z0AtMouse() {
+    this._cindy.evokeCS('javascript("' + this._varName + '._z0AtMouse = "+contains(elementsatmouse(),Z0)+";");');
+    return this._z0AtMouse;
+  }
+
+  get isPtSelected() {
+    this._cindy.evokeCS('javascript("' + this._varName + '.isPtSelected = "+(mover() == Z0)+";");');
+    return this._isPtSelected;
+  }
+
+  get mousepos() {
+    this._cindy.evokeCS('javascript("' + this._varName + '._mousepos = "+mouse());');
+    return this._mousepos;
+  }
+
+  get mouseshift() {
+    this._mouseshift = subtractarrays(this._mousepos,this.mousepos);
+    return this._mouseshift;
+  }
 
   get z0() {
     this._cindy.evokeCS('javascript("' + this._varName + '._z0 = ' + this._varName + '.CanvToPlot("+Z0.xy+")");');
@@ -329,7 +394,7 @@ var reim = function(z) {
 }
 
 var getCInput = function() {
-  return complex(document.getElementById("inpc").value.split(","));
+  return document.getElementById("inpc").value;
 }
 
 var getNInput = function() {
@@ -367,8 +432,11 @@ var getDZoomInput = function() {
 //////////
 
 var setCInput = function(cval) {
-  cval = cval.map(vals => vals.toPrecision(6)).map(parseFloat);
-  document.getElementById("inpc").value = cval;
+  if (typeof cval === "string") {
+    cval = reim(cval);
+  }
+  cval = cval.map(vals => vals.toPrecision(6)).map(parseFloat); // truncate displayed precision
+  document.getElementById("inpc").value = complex(cval);
 }
 
 var setNInput = function(nval) {
@@ -416,17 +484,20 @@ var getPresetDicts = function() {
           {f:getFInput(), c:julia_fract.c, n:getNInput(), escape:getDEscInput(), zoom: getDZoomInput(), center: getDCenterInput()}];
 }
 
-
-var apply_preset = function(preset_val) {
+var setInputs = function(preset_val) {
   setPCenterInput(param_preset_dict[preset_val].center);
   setPZoomInput(param_preset_dict[preset_val].zoom);
   setDCenterInput(dyn_preset_dict[preset_val].center);
   setDZoomInput(dyn_preset_dict[preset_val].zoom);
-  setCInput(reim(param_preset_dict[preset_val].c));
+  setCInput(param_preset_dict[preset_val].c);
   setNInput(param_preset_dict[preset_val].n);
   setFInput(param_preset_dict[preset_val].f);
   setPEscInput(param_preset_dict[preset_val].escape);
   setDEscInput(dyn_preset_dict[preset_val].escape);
+}
+
+var apply_preset = function(preset_val) {
+  setInputs(preset_val);
   julia_fract.ApplyPreset(    dyn_preset_dict[preset_val]);
   parameter_fract.ApplyPreset(param_preset_dict[preset_val]);
 }

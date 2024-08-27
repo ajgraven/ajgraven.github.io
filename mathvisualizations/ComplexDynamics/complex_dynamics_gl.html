@@ -20,13 +20,18 @@
         <script type="text/javascript">
             var julia_fract = new FractalPlot("julia_fract",dyn_preset_dict["mandelbrot"],"JCSCanvas","JCSCanvas",
                 {
-                    keydown: ['setDZoomInput(julia_fract.zoom)','setDCenterInput(julia_fract.center)']
+                    keydown: ['setDZoomInput(julia_fract.zoom)','setDCenterInput(julia_fract.center)'],
+                    mousedrag:  ['if (!(julia_fract.z0AtMouse)) {julia_fract.shift(arraymult(julia_fract.mouseshift,1/julia_fract.zoom))}'],
+                    mousedown:  ['julia_fract.mouseshift === null']
                 }
                 ,"dyn",500,500,500);
             var parameter_fract = new FractalPlot("parameter_fract",param_preset_dict["mandelbrot"],"MCSCanvas","MCSCanvas",
                 {
-                    move:    ['julia_fract.c = complex(parameter_fract.z0)','setCInput(parameter_fract.z0)'],
-                    keydown: ['setPZoomInput(parameter_fract.zoom)','setPCenterInput(parameter_fract.center)']
+                    move:       ['julia_fract.c = complex(parameter_fract.z0)',
+                                 'if (parameter_fract.isPtSelected) {setCInput(parameter_fract.z0)}'],
+                    keydown:    ['setPZoomInput(parameter_fract.zoom)','setPCenterInput(parameter_fract.center)'],
+                    mousedrag:  ['if (!(parameter_fract.z0AtMouse)) {parameter_fract.shift(arraymult(parameter_fract.mouseshift,1/parameter_fract.zoom))}'],
+                    mousedown:  ['parameter_fract.mouseshift === null']
                 },
                 "param",500,500,500);
         </script>
