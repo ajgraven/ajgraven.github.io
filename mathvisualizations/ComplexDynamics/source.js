@@ -42,6 +42,35 @@ var iniscript = function(preset,res) {
       w
   );
 
+  //fRootFcn(z) := z^2-2;
+
+  //complex function root finder, via the
+  //variable-step secant method
+  //fRootFcn = input function
+  //Z0       = initial guess
+  //N        = maximum # of iterations
+  //tol      = default error tolerance
+  //findroot(Z0,N,tol) := (
+  //  h = 2*tol; // step for first derivative approximation
+  //  Z1 = Z0-(1/2)*fRootFcn(Z0)/((fRootFcn(Z0+h)-fRootFcn(Z0))/h); // get second iterate via truncated Newton's
+  //  a = 1;
+  //  SM(z0,z1) := (z1-a*fRootFcn(z1)*(z1-z0)/(fRootFcn(z1)-fRootFcn(z0))); // secant method iteration
+  //  repeat(N,
+  //    if(abs(fRootFcn(Z1))>tol,
+  //      a = 1;
+  //      zStep = SM(Z0,Z1);
+  //      while((abs(fRootFcn(zStep)) > abs(fRootFcn(Z1))) & (a >= sqrt(tol)),
+  //        a = a/2;
+  //        zStep = SM(Z0,Z1);
+  //      );
+  //      Z0 = Z1;
+  //      Z1 = zStep;
+  //    );
+  //  );
+  //  Z1
+  //);
+
+
   // initial values of parameters
   n = ${preset.n}; // number of iterates to use when generating image
   c = ${preset.c}; // initial value of c
@@ -418,8 +447,12 @@ var getCInput = function() {
   return document.getElementById("inpc").value;
 }
 
-var getNInput = function() {
-  return parseInt(document.getElementById("inpn").value);
+var getPNInput = function() {
+  return parseInt(document.getElementById("inpmn").value);
+}
+
+var getDNInput = function() {
+  return parseInt(document.getElementById("inpjn").value);
 }
 
 var getFInput = function() {
@@ -461,7 +494,8 @@ var setCInput = function(cval) {
 }
 
 var setNInput = function(nval) {
-  document.getElementById("inpn").value = nval;
+  document.getElementById("inpmn").value = nval;
+  document.getElementById("inpjn").value = nval;
 }
 
 var setFInput = function(fval) {
@@ -501,8 +535,8 @@ var apply_changes = function() {
 }
 
 var getPresetDicts = function() {
-  return [{f:getFInput(), c:getCInput(), n:getNInput(), escape:getPEscInput(), zoom: getPZoomInput(), center: getPCenterInput()},
-          {f:getFInput(), c:julia_fract.c, n:getNInput(), escape:getDEscInput(), zoom: getDZoomInput(), center: getDCenterInput()}];
+  return [{f:getFInput(), c:getCInput(), n:getPNInput(), escape:getPEscInput(), zoom: getPZoomInput(), center: getPCenterInput()},
+          {f:getFInput(), c:julia_fract.c, n:getDNInput(), escape:getDEscInput(), zoom: getDZoomInput(), center: getDCenterInput()}];
 }
 
 var setInputs = function(preset_val) {

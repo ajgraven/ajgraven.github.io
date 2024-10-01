@@ -32,52 +32,94 @@
                 "param",500,500,500);
         </script>
 
-     <table cols=3 rows=2>
-        <tr style="vertical-align: center;">
+     <table cols=2 rows=2>
+        <tr style="vertical-align: top;">
             <th>
-                <table cols=3 rows=2>
-                    <tr style="vertical-align: center;">
-                        <th colspan=3>
+                <table cols=3 rows=3>
+                    <tr style="vertical-align: top;">
+                        <td colspan=3>
                             <div style="text-align:center;position:relative;display:inline-block;">
                                 <h2>Parameter Space</h2>
                                 <canvas id="MCSCanvas"></canvas>
                             </div>
-                        </th>
+                        </td>
                     </tr>
-                    <tr style="vertical-align: center;">
-                        <th>
-                            <label for="inpparamcenter">center</label><br>
-                            <div style="text-align:center;position:relative;display:inline-block;">
-                                <input type="text"     id="inpparamcenter" placeholder="-.75,0" value="-.75,0" size="14" style="font-size:15px">
-                            </div>
-                        </th>
-                        <th>
-                            <label for="inpparamzoom">zoom</label><br>
-                            <div style="text-align:center;position:relative;display:inline-block;">
-                                <input type="text"     id="inpparamzoom" placeholder=".75" value=".75" size="14" style="font-size:15px">
-                            </div>
-                        </th>
-                        <th>
-                            <label for="param_res">resolution</label>
-                            <table id="param_res">
+                    <tr style="vertical-align: top;">
+                        <td>
+                            <table>
                                 <tr>
-                                    <th>
+                                    <td>
+                                        <label for="inpc">c</label><br>
                                         <div style="text-align:center;position:relative;display:inline-block;">
-                                            <input type="text"     id="inpdres" value="500"  size="4" style="font-size:15px">
+                                            <input type="text"     id="inpc" placeholder="a+b*i" value="-.7-.4*i" size="14" style="font-size:15px">
                                         </div>
-                                    </th>
-                                    <th>
-                                        <button id="test" onclick="parameter_fract.res = document.getElementById('inpdres').value" style="font-size:15px">apply</button>
-                                    </th>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <label for="inpme">escape(z,c)</label><br>
+                                        <div style="text-align:center;position:relative;display:inline-block;">
+                                            <textarea id="inpme" rows="1" cols="14" style="font-size:15px;resize:none;">abs(z)>2</textarea>
+                                        </div>
+                                    </td>
                                 </tr>
                             </table>
-                        </th>
+                        </td>
+                        <td>
+                            <table>
+                                <tr>
+                                    <td>
+                                        <label for="inpparamcenter">center</label><br>
+                                        <div style="text-align:center;position:relative;display:inline-block;">
+                                            <input type="text"     id="inpparamcenter" placeholder="-.75,0" value="-.75,0" size="14" style="font-size:15px">
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <label for="inpparamzoom">zoom</label><br>
+                                        <div style="text-align:center;position:relative;display:inline-block;">
+                                            <input type="text"     id="inpparamzoom" placeholder=".75" value=".75" size="14" style="font-size:15px">
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                        <td>
+                            <table>
+                                <tr>
+                                    <td>
+                                        <label for="param_res">resolution</label>
+                                        <table id="param_res">
+                                            <tr>
+                                                <td>
+                                                    <div style="text-align:center;position:relative;display:inline-block;">
+                                                        <input type="text"     id="inpdres" value="500"  size="4" style="font-size:15px">
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <button id="test" onclick="parameter_fract.res = document.getElementById('inpdres').value" style="font-size:15px">apply</button>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <label for="inpmn">max # iterations</label><br>
+                                        <div style="text-align:center;position:relative;display:inline-block;">
+                                            <input type="text"     id="inpmn" value="100"  size="11" style="font-size:15px">
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
                     </tr>
                 </table>
             </th>
             <th>
                 <table cols=3 rows=2>
-                    <tr style="vertical-align: center;">
+                    <tr style="vertical-align: top;">
                         <th colspan=3>
                             <div style="text-align:center;position:relative;display:inline-block;">
                                 <h2>Dynamical Plane</h2>
@@ -85,110 +127,116 @@
                             </div>
                         </th>
                     </tr>
-                    <tr style="vertical-align: center;">
-                        <th>
-                            <label for="inpdyncenter">center</label><br>
-                            <div style="text-align:center;position:relative;display:inline-block;">
-                                <input type="text"     id="inpdyncenter" placeholder="0,0" value="0,0" size="14" style="font-size:15px">
-                            </div>
-                        </th>
-                        <th>
-                            <label for="inpdynzoom">zoom</label><br>
-                            <div style="text-align:center;position:relative;display:inline-block;">
-                                <input type="text"     id="inpdynzoom" placeholder=".65" value=".65" size="14" style="font-size:15px">
-                            </div>
-                        </th>
-                        <th>
-                            <label for="julia_res">resolution</label>
-                            <table id="julia_res">
+                    <tr style="vertical-align: top;">
+                        <td>
+                            <table>
                                 <tr>
-                                    <th>
+                                    <td>
+                                        <label for="inpje">escape(z,c)</label><br>
                                         <div style="text-align:center;position:relative;display:inline-block;">
-                                            <input type="text"     id="inpjres" value="500"  size="4" style="font-size:15px">
+                                            <textarea id="inpje" rows="3" cols="14" style="font-size:15px;resize:none;">abs(z)>2</textarea>
                                         </div>
-                                    </th>
-                                    <th>
-                                        <button id="test" onclick="julia_fract.res = document.getElementById('inpjres').value" style="font-size:15px">apply</button>
-                                    </th>
+                                    </td>
                                 </tr>
                             </table>
-                        </th>
-
+                        </td>
+                        <td>
+                            <table>
+                                <tr>
+                                    <td>
+                                        <label for="inpdyncenter">center</label><br>
+                                        <div style="text-align:center;position:relative;display:inline-block;">
+                                            <input type="text"     id="inpdyncenter" placeholder="0,0" value="0,0" size="14" style="font-size:15px">
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <label for="inpdynzoom">zoom</label><br>
+                                        <div style="text-align:center;position:relative;display:inline-block;">
+                                            <input type="text"     id="inpdynzoom" placeholder=".65" value=".65" size="14" style="font-size:15px">
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                        <td>
+                            <table>
+                                <tr>
+                                    <td>
+                                        <label for="julia_res">resolution</label>
+                                        <table id="julia_res">
+                                            <tr>
+                                                <td>
+                                                    <div style="text-align:center;position:relative;display:inline-block;">
+                                                        <input type="text"     id="inpjres" value="500"  size="4" style="font-size:15px">
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <button id="test" onclick="julia_fract.res = document.getElementById('inpjres').value" style="font-size:15px">apply</button>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <label for="inpjn">max # iterations</label><br>
+                                        <div style="text-align:center;position:relative;display:inline-block;">
+                                            <input type="text"     id="inpjn" value="100"  size="11" style="font-size:15px">
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
                     </tr>
                 </table>
             </th>
-            <th style="vertical-align: top;">
-                <h2>Parameters</h2>
-                <table cols=2 rows=9>
+        </tr>
+        <tr style="vertical-align: top;  border:1pt solid black">
+            <td style="vertical-align: top;">
+                <table cols=2 rows=1>
                     <tr>
-                        <th colspan=2>
-                            <button id="apply_changes" onclick="apply_changes()" style="font-size:15px">apply</button>
+                        <th>
+                            <table>
+                                <tr>
+                                    <td>
+                                        <label for="fractal_preset_cell">Presets</label>
+                                        <table id="fractal_preset_cell">
+                                            <tr>
+                                                <th>
+                                                    <select id="fractal_presets" style="font-size:15px">
+                                                        <option value="mandelbrot">Mandelbrot set</option>
+                                                        <option value="tricorn">tricorn</option>
+                                                        <option value="burning ship">burning ship</option>
+                                                        <option value="butterfly">butterfly</option>
+                                                        <option value="exponential map">exponential map</option>
+                                                        <option value="exp Schwarz">exp Schwarz</option>
+                                                    </select>
+                                                </th>
+                                                <th>
+                                                    <button id="apply_preset" onclick="apply_preset(document.getElementById('fractal_presets').value)" style="font-size:15px">apply</button>
+                                                </th>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <button id="apply_changes" onclick="apply_changes()" style="font-size:15px;font-weight:bold;text-align:center;height:25px;width:200px">APPLY ALL</button>
+                                    </td>
+                                </tr>
+                            </table>
                         </th>
-                    </tr>
-                    <tr style="vertical-align: center;">
-                        <th colspan=2>
-                            <label for="inpc">c</label><br>
-                            <div style="text-align:center;position:relative;display:inline-block;">
-                                <input type="text"     id="inpc" placeholder="a+b*i" value="-.7-.4*i" size="20" style="font-size:15px">
-                            </div>
-                        </th>
-                    </tr>
-                    <tr style="vertical-align: center;">
-                        <th colspan=2>
-                            <label for="inpn">max # iterations</label><br>
-                            <div style="text-align:center;position:relative;display:inline-block;">
-                                <input type="text"     id="inpn" value="100"  size="20" style="font-size:15px">
-                            </div>
-                        </th>
-                    </tr>
-                    <tr>
-                        <th colspan=2>
+                        <th>
                             <label for="inpf">f(z,c)</label><br>
                             <div style="text-align:center;position:relative;display:inline-block;">
-                                <textarea id="inpf" rows="3" cols="20" style="font-size:15px">z^2+c</textarea>
+                                <textarea id="inpf" rows="3" cols="20" style="font-size:15px;resize:none;">z^2+c</textarea>
                             </div>
-                        </th>
-                    </tr>
-                    <tr>
-                        <th colspan=2>
-                            <label for="inpme">parameter escape(z,c)</label><br>
-                            <div style="text-align:center;position:relative;display:inline-block;">
-                                <textarea id="inpme" rows="3" cols="20" style="font-size:15px">abs(z)>2</textarea>
-                            </div>
-                        </th>
-                    </tr>
-                    <tr>
-                        <th colspan=2>
-                            <label for="inpje">dynamical escape(z,c)</label><br>
-                            <div style="text-align:center;position:relative;display:inline-block;">
-                                <textarea id="inpje" rows="3" cols="20" style="font-size:15px">abs(z)>2</textarea>
-                            </div>
-                        </th>
-                    </tr>
-                    <tr>
-                        <th colspan=2>
-                            <label for="fractal_preset_cell">Presets</label>
-                            <table id="fractal_preset_cell">
-                                <tr>
-                                    <th>
-                                        <select id="fractal_presets" style="font-size:15px">
-                                            <option value="mandelbrot">Mandelbrot set</option>
-                                            <option value="tricorn">tricorn</option>
-                                            <option value="burning ship">burning ship</option>
-                                            <option value="butterfly">butterfly</option>
-                                            <option value="exponential map">exponential map</option>
-                                            <option value="exp Schwarz">exp Schwarz</option>
-                                        </select>
-                                    </th>
-                                    <th>
-                                        <button id="apply_preset" onclick="apply_preset(document.getElementById('fractal_presets').value)" style="font-size:15px">apply</button>
-                                    </th>
-                                </tr>
-                            </table>
                         </th>
                     </tr>
                 </table>
-            </th>
+            </td>
         </tr>
     </table>
     </body>
@@ -203,6 +251,6 @@
     </ul>
     <br><br><br>
     <footer id="footer">
-        <p class="copyright">Created by Andrew Graven. Last updated 8/27/24</p>
+        <p class="copyright">Created by Andrew Graven. Last updated 10/01/24</p>
     </footer>
 </html>
