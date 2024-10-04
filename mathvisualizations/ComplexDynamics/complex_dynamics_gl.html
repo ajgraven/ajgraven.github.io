@@ -194,13 +194,19 @@
             </th>
         </tr>
         <tr style="vertical-align: top;  border:1pt solid black">
-            <td style="vertical-align: top;">
+            <td style="vertical-align: top;" colspan=2>
                 <table cols=2 rows=1>
                     <tr>
                         <th>
+                            <label for="inpf">f(z,c)</label><br>
+                            <div style="text-align:center;position:relative;display:inline-block;">
+                                <textarea id="inpf" rows="3" cols="20" style="font-size:15px;resize:none;">z^2+c</textarea>
+                            </div>
+                        </th>
+                        <th style="vertical-align: top;">
                             <table>
                                 <tr>
-                                    <td>
+                                    <td style="vertical-align: top;">
                                         <label for="fractal_preset_cell">Presets</label>
                                         <table id="fractal_preset_cell">
                                             <tr>
@@ -221,18 +227,10 @@
                                         </table>
                                     </td>
                                 </tr>
-                                <tr>
-                                    <td>
-                                        <button id="apply_changes" onclick="apply_changes()" style="font-size:15px;font-weight:bold;text-align:center;height:25px;width:200px">APPLY ALL</button>
-                                    </td>
-                                </tr>
                             </table>
                         </th>
                         <th>
-                            <label for="inpf">f(z,c)</label><br>
-                            <div style="text-align:center;position:relative;display:inline-block;">
-                                <textarea id="inpf" rows="3" cols="20" style="font-size:15px;resize:none;">z^2+c</textarea>
-                            </div>
+                            <button id="apply_changes" onclick="apply_changes()" style="font-size:15px;font-weight:bold;text-align:center;height:75px;width:200px">APPLY ALL</button>
                         </th>
                     </tr>
                 </table>
