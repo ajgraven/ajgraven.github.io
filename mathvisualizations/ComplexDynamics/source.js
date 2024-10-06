@@ -42,6 +42,8 @@ var iniscript = function(preset,res) {
       w
   );
 
+  arg(z) := arctan2(reim(z));
+
   //fRootFcn(z) := z^2-2;
 
   //complex function root finder, via the

@@ -14,7 +14,7 @@
     </head>
 
     <body style="font-family: Arial">
-        <h1>Complex Dynamics Visualization Tool</h1>
+        <h1 style="margin-bottom: 0em;">Complex Dynamics Visualization Tool</h1>
 
         <script src="source.js" type="text/javascript"></script>
         <script type="text/javascript">
@@ -30,9 +30,12 @@
                     keydown:    ['setPZoomInput(parameter_fract.zoom)','setPCenterInput(parameter_fract.center)']
                 },
                 "param",500,500,500);
+
+            document.addEventListener("keyup", event => {if (event.key=="Enter") {apply_changes();}}); // Apply changes when enter is pressed
         </script>
 
-     <table cols=2 rows=2>
+
+    <table cols=2 rows=2>
         <tr style="vertical-align: top;">
             <th>
                 <table cols=3 rows=3>
@@ -229,26 +232,48 @@
                                 </tr>
                             </table>
                         </th>
+                        <!--
                         <th>
                             <button id="apply_changes" onclick="apply_changes()" style="font-size:15px;font-weight:bold;text-align:center;height:75px;width:200px">APPLY ALL</button>
                         </th>
+                        !-->
                     </tr>
                 </table>
             </td>
         </tr>
     </table>
     </body>
-    <h4>Instructions</h4>
-    <ul>
-        <li>The left plot is the parameter space and the right is the dynamical plane.</li>
-        <li>The white point in the parameter space plot corresponds to the value of "c" to be used for the dynamical plot, and may be dragged.</li>
-        <li>The white point in the dynamical plane is the starting point for a plot of the first 8 iterates. This can also be moved.</li>
-        <li>The arrow keys shift and the +/- keys zoom the plot window.</li>
-        <li>The text boxes to the right of the plots may be used to edit the iteration function, as well as the escape condition. (there are separate escape condition boxes for the dynamical plane and the parameter space to ameliorate problems of numerical stability in certain examples)</li>
-        <li>The use of GPU acceleration limits accuracy beyond a certain level of zoom.</li>
-    </ul>
+    <table style="width:1000px">
+        <tr>
+            <td style="vertical-align: top; width: 50%;">
+                <h4 style="margin-bottom: -.7em;">General information</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;"> This Javascript applet generates a plot of parameter space associated to the complex function f(z,c), and renders a plot of the dynamical plane associated to the chosen value of the parameter "c".</li>
+                    <li style="padding-bottom: 0.2em;"> Points are colored according to their escape time, which is the number of iterations of f(z,c) required for escape(z,c) to return true.</li>
+                    <li style="padding-bottom: 0.2em;"> The white point in the parameter space corresponds to the value of "c" for the dynamical plane. This point is draggable, with the plot of the dynamical plane updating in real time.</li>
+                    <li style="padding-bottom: 0.2em;"> The white point in the dynamical plane is the starting point for a plot of the first 8 iterates. This can also be dragged.</li>
+                    <li> The use of GPU acceleration limits accuracy beyond a certain level of zoom.</li>
+                </ul>
+            </td>
+            <td style="vertical-align: top; width: 50%;">
+                <h4 style="margin-bottom: -.7em;">Controls</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;"> The plot window can be moved via either the arrow keys or by clicking and dragging.</li>
+                    <li style="padding-bottom: 0.2em;"> The zoom level may be adjusted via the +/- keys.</li>
+                    <li style="padding-bottom: 0.2em;"> The white point in each plot may be clicked and dragged to change its value.</li>
+                    <li> Press "enter" to apply changes.</li>
+                </ul>
+                <h4 style="margin-bottom: -.7em;">Predefined objects</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;"> <b>Constants:</b> e, pi, i.</li>
+                    <li style="padding-bottom: 0.2em;"> <b>Operations:</b> z*w, z^w, z+w, z-w, z/w, |z|, sqrt, exp, log, sin, cos, tan, arcsin, arccos, arctan, arctan2(x,y), lambertw, re, im, conjugate, arg, mod(x,y), round, floor, ceil.</li>
+                    <li> <b>Misc. functions:</b> random(x) (random float in (0,x)), randomint(n) (random integer in [0,n]), randombool() (random true/false).</li>
+                </ul>
+            </td>
+        </tr>
+    </table>
     <br><br><br>
     <footer id="footer">
-        <p class="copyright">Created by Andrew Graven. Last updated 10/01/24</p>
+        <p class="copyright">Created by Andrew Graven. Last updated 10/06/24</p>
     </footer>
 </html>
