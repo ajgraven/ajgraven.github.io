@@ -92,26 +92,17 @@
                             <table>
                                 <tr>
                                     <td>
-                                        <label for="param_res">resolution</label>
-                                        <table id="param_res">
-                                            <tr>
-                                                <td>
-                                                    <div style="text-align:center;position:relative;display:inline-block;">
-                                                        <input type="text"     id="inpdres" value="500"  size="4" style="font-size:15px">
-                                                    </div>
-                                                </td>
-                                                <td>
-                                                    <button id="test" onclick="parameter_fract.res = document.getElementById('inpdres').value" style="font-size:15px">apply</button>
-                                                </td>
-                                            </tr>
-                                        </table>
+                                        <label for="inpmn">max # iterations</label><br>
+                                        <div style="text-align:center;position:relative;display:inline-block;">
+                                            <input type="text"     id="inpmn" value="100"  size="11" style="font-size:15px">
+                                        </div>
                                     </td>
                                 </tr>
                                 <tr>
                                     <td>
-                                        <label for="inpmn">max # iterations</label><br>
+                                        <label for="param_res">resolution</label><br>
                                         <div style="text-align:center;position:relative;display:inline-block;">
-                                            <input type="text"     id="inpmn" value="100"  size="11" style="font-size:15px">
+                                            <input type="text"     id="inpdres" value="500"  size="11" style="font-size:15px">
                                         </div>
                                     </td>
                                 </tr>
@@ -167,26 +158,17 @@
                             <table>
                                 <tr>
                                     <td>
-                                        <label for="julia_res">resolution</label>
-                                        <table id="julia_res">
-                                            <tr>
-                                                <td>
-                                                    <div style="text-align:center;position:relative;display:inline-block;">
-                                                        <input type="text"     id="inpjres" value="500"  size="4" style="font-size:15px">
-                                                    </div>
-                                                </td>
-                                                <td>
-                                                    <button id="test" onclick="julia_fract.res = document.getElementById('inpjres').value" style="font-size:15px">apply</button>
-                                                </td>
-                                            </tr>
-                                        </table>
+                                        <label for="inpjn">max # iterations</label><br>
+                                        <div style="text-align:center;position:relative;display:inline-block;">
+                                            <input type="text"     id="inpjn" value="100"  size="11" style="font-size:15px">
+                                        </div>
                                     </td>
                                 </tr>
                                 <tr>
                                     <td>
-                                        <label for="inpjn">max # iterations</label><br>
+                                        <label for="julia_res">resolution</label><br>
                                         <div style="text-align:center;position:relative;display:inline-block;">
-                                            <input type="text"     id="inpjn" value="100"  size="11" style="font-size:15px">
+                                            <input type="text"     id="inpjres" value="500"  size="11" style="font-size:15px">
                                         </div>
                                     </td>
                                 </tr>
@@ -228,6 +210,11 @@
                                                 </th>
                                             </tr>
                                         </table>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <button id="apply_all" onclick="apply_changes()" style="font-size:15px">apply changes</button>
                                     </td>
                                 </tr>
                             </table>
@@ -272,8 +259,9 @@
             </td>
         </tr>
     </table>
+    <h4 style="margin-top: -.4em;">Contact me at andrew@graven.com with any comments, suggestions, or feature requests.</h4>
     <br><br><br>
     <footer id="footer">
-        <p class="copyright">Created by Andrew Graven. Last updated 10/06/24</p>
+        <p class="copyright">Created by Andrew Graven. Last updated 10/31/24</p>
     </footer>
 </html>

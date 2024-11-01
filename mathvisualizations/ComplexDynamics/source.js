@@ -1,18 +1,18 @@
 var param_preset_dict = {
-  "mandelbrot":     {f:"z^2+c", c:'-.7-.4*i', n:'100', escape:"abs(z)>2", zoom: .75, center: [-.75,0]},
-  "tricorn":        {f:"conjugate(z^2)+c",  c:'.1091+i*.502',    n:'50', escape:"abs(z)>2", zoom: .55, center: [-.25,0]},
-  "burning ship":   {f:"(abs(re(z))+i*abs(im(z)))^2-c", c:'1.6185+i*0.0471', n:'100', escape:"abs(z)>2", center:[1.7,.05], zoom: 10},
-  "butterfly":      {f:"conjugate(z^2)+c*re(1/z)", c:'.252+i*0', n:'150', escape:"abs(z)>4", center:[0,0], zoom:.7},
-  "exponential map":{f:"c*e^(z-1)", c:'1+0*i', n:'25', escape:'re(log(c)+z)>3000', center:[3.5,0], zoom: .08},
-  "exp Schwarz":    {f:"c0 = c^2/z;c1 = lambertw(-c0);conjugate(c0/exp(c1+c^2/c1));", c:'1+0*i', n:'50', escape:"abs(lambertw(-c^2/f(z,c)))>abs(c)",center: [1,0], zoom: .5}
+  "mandelbrot":     {f:"z^2+c", c:'-.7-.4*i', n:'100', nplot:'7', escape:"abs(z)>2", zoom: .75, center: [-.75,0]},
+  "tricorn":        {f:"conjugate(z^2)+c",  c:'.1091+i*.502',    n:'50', nplot:'6', escape:"abs(z)>2", zoom: .55, center: [-.25,0]},
+  "burning ship":   {f:"(abs(re(z))+i*abs(im(z)))^2-c", c:'1.6185+i*0.0471', n:'100', nplot:'6', escape:"abs(z)>2", center:[1.7,.05], zoom: 10},
+  "butterfly":      {f:"conjugate(z^2)+c*re(1/z)", c:'.252+i*0', n:'150', nplot:'6', escape:"abs(z)>4", center:[0,0], zoom:.7},
+  "exponential map":{f:"c*e^(z-1)", c:'1+0*i', n:'25', nplot:'6', escape:'re(log(c)+z)>3000', center:[3.5,0], zoom: .08},
+  "exp Schwarz":    {f:"c0 = c^2/z;c1 = lambertw(-c0);conjugate(c0/exp(c1+c^2/c1));", c:'1+0*i', n:'50', nplot:'6', escape:"abs(lambertw(-c^2/f(z,c)))>abs(c)",center: [1,0], zoom: .5}
 };
 var dyn_preset_dict = {
-  "mandelbrot":     {f:"z^2+c", c:'.2541-.0333*i', n:'100', escape:"abs(z)>2", zoom: .65, center: [0,0]},
-  "tricorn":        {f:"conjugate(z^2)+c",  c:'.2541-i*0.2302',    n:'50', escape:"abs(z)>2", zoom: .65, center: [0,0]},
-  "burning ship":   {f:"(abs(re(z))+i*abs(im(z)))^2-c", c:'-.8217+i*0.1233', n:'100', escape:"abs(z)>2", center:[0,0], zoom: .5},
-  "butterfly":      {f:"conjugate(z^2)+c*re(1/z)", c:'-.4547-i*.7733', n:'150', escape:"abs(z)>4", center:[0,0], zoom:.9},
-  "exponential map":{f:"c*e^(z-1)", c:'1.418-i*.119', n:'25', escape:'re(log(c)+z)>3000', zoom:.13, center:[8,0]},
-  "exp Schwarz":    {f:"c0 = c^2/z;c1 = lambertw(-c0);conjugate(c0/exp(c1+c^2/c1));", c:'2.92-.48*i', n:'50', escape:"if(re(z)<-5,true,if(abs(lambertw(-c^2/f(z,c)))>abs(c),true,false));", center:[6,0], zoom:.15}
+  "mandelbrot":     {f:"z^2+c", c:'.2541-.0333*i', n:'100', nplot:'7', escape:"abs(z)>2", zoom: .65, center: [0,0]},
+  "tricorn":        {f:"conjugate(z^2)+c",  c:'.2541-i*0.2302',    n:'50', nplot:'6', escape:"abs(z)>2", zoom: .65, center: [0,0]},
+  "burning ship":   {f:"(abs(re(z))+i*abs(im(z)))^2-c", c:'-.8217+i*0.1233', n:'100', nplot:'6', escape:"abs(z)>2", center:[0,0], zoom: .5},
+  "butterfly":      {f:"conjugate(z^2)+c*re(1/z)", c:'-.4547-i*.7733', n:'150', nplot:'6', escape:"abs(z)>4", center:[0,0], zoom:.9},
+  "exponential map":{f:"c*e^(z-1)", c:'1.418-i*.119', n:'25', nplot:'6', escape:'re(log(c)+z)>3000', zoom:.13, center:[8,0]},
+  "exp Schwarz":    {f:"c0 = c^2/z;c1 = lambertw(-c0);conjugate(c0/exp(c1+c^2/c1));", c:'2.92-.48*i', n:'50', nplot:'6', escape:"if(re(z)<-5,true,if(abs(lambertw(-c^2/f(z,c)))>abs(c),true,false));", center:[6,0], zoom:.15}
 };
 
 var iniscript = function(preset,res) {
@@ -76,7 +76,7 @@ var iniscript = function(preset,res) {
   // initial values of parameters
   n = ${preset.n}; // number of iterates to use when generating image
   c = ${preset.c}; // initial value of c
-  nplot = 6; // number of iterates to plot
+  nplot = ${preset.nplot}; // number of iterates to plot
   zoom = ${preset.zoom};
   center = [${preset.center}];
 
@@ -170,6 +170,7 @@ class FractalPlot {
     this._c = paramDict.c; // value of c. string of the form a+b*i
     this._f = paramDict.f; // iteration expression (string) f(z,c)="this._f" 
     this._n = paramDict.n; // maximum number of iterations per pixel
+    this._nplot = paramDict.nplot; // number of iterates to plot
     this._esc = paramDict.escape; // escape condition (string) escape(z,c)="this._escape"
     this._center = paramDict.center; // center of plot (array)
     this._zoom = paramDict.zoom; // default zoom level
@@ -188,13 +189,13 @@ class FractalPlot {
       case "dyn":
         this._movescript = 'colorplot([center_1-1/zoom,center_2-1/zoom],[center_1+1/zoom,center_2-1/zoom],"julia",colorFcn(dynIter(complex(#), c)));' +
         'drawimage([0,0],[2,0], "julia");' +
-        'connect(apply(dynKIter(CanvToPltZ(complex(Z0.xy)),c,nplot),reim(PltToCanvZ(#))),color->[1,1,1],size->1.8);' +
+        'connect(apply(dynKIter(CanvToPltZ(complex(Z0.xy)),c,nplot-1),reim(PltToCanvZ(#))),color->[1,1,1],size->1.8);' +
         'drawtext(Z0+(.025,.025), "z0="+CanvToPltZ(complex(Z0.xy)), color->[1,1,1],size->15);';
         break;
       case "param":
         this._movescript = 'colorplot([center_1-1/zoom,center_2-1/zoom],[center_1+1/zoom,center_2-1/zoom],"julia",colorFcn(paramIter(complex(#))));' +
         'drawimage([0,0],[2,0], "julia");' +
-        'connect(apply(paramKIter(CanvToPltZ(complex(Z0.xy)),nplot),reim(PltToCanvZ(#))),color->[1,1,1],size->1.8);' +
+        'connect(apply(paramKIter(CanvToPltZ(complex(Z0.xy)),nplot-1),reim(PltToCanvZ(#))),color->[1,1,1],size->1.8);' +
         'drawtext(Z0+(.025,.025), "c="+CanvToPltZ(complex(Z0.xy)), color->[1,1,1],size->15);';
         break;
     }
@@ -253,6 +254,7 @@ class FractalPlot {
     this.c = preset.c;
     this.f = preset.f;
     this.n = preset.n;
+    this.nplot = preset.nplot;
     this.esc = preset.escape;
     if(this._fractType === "param") {
       this.z0 = reim(this.c);
@@ -314,6 +316,11 @@ class FractalPlot {
   set n(nval) {
     this._n = nval;
     this.evokeCS(`n=${this._n};`);
+  }
+
+  set nplot(nplotval) {
+    this._nplot = nplotval;
+    this.evokeCS(`nplot=${this._nplot};`);
   }
 
   set zoom(zoomval) {
@@ -382,6 +389,10 @@ class FractalPlot {
     return this._n;
   }
 
+  get nplot() {
+    return this._nplot;
+  }
+
   get cindy() {
     return this._cindy;
   }
@@ -445,6 +456,19 @@ var reim = function(z) {
   return [re(z),im(z)];
 }
 
+
+
+
+
+
+
+
+
+
+
+
+// Javascript-HTML interfacing functions.
+
 var getCInput = function() {
   return document.getElementById("inpc").value;
 }
@@ -455,6 +479,14 @@ var getPNInput = function() {
 
 var getDNInput = function() {
   return parseInt(document.getElementById("inpjn").value);
+}
+
+var getPNPlotInput = function() {
+  return 7;
+}
+
+var getDNPlotInput = function() {
+  return 7;
 }
 
 var getFInput = function() {
@@ -531,14 +563,9 @@ var setDZoomInput = function(zoomval) {
 }
 
 
-var apply_changes = function() {
-  julia_fract.ApplyPreset(    getPresetDicts()[1]);
-  parameter_fract.ApplyPreset(getPresetDicts()[0]);
-}
-
 var getPresetDicts = function() {
-  return [{f:getFInput(), c:getCInput(), n:getPNInput(), escape:getPEscInput(), zoom: getPZoomInput(), center: getPCenterInput()},
-          {f:getFInput(), c:julia_fract.c, n:getDNInput(), escape:getDEscInput(), zoom: getDZoomInput(), center: getDCenterInput()}];
+  return [{f:getFInput(), c:getCInput(), n:getPNInput(), nplot:getPNPlotInput(), escape:getPEscInput(), zoom: getPZoomInput(), center: getPCenterInput()},
+          {f:getFInput(), c:julia_fract.c, n:getDNInput(), nplot:getDNPlotInput(), escape:getDEscInput(), zoom: getDZoomInput(), center: getDCenterInput()}];
 }
 
 var setInputs = function(preset_val) {
@@ -559,3 +586,9 @@ var apply_preset = function(preset_val) {
   parameter_fract.ApplyPreset(param_preset_dict[preset_val]);
 }
 
+var apply_changes = function() {
+  julia_fract.ApplyPreset(    getPresetDicts()[1]);
+  parameter_fract.ApplyPreset(getPresetDicts()[0]);
+  parameter_fract.res = document.getElementById('inpdres').value;
+  julia_fract.res = document.getElementById('inpjres').value;
+}
