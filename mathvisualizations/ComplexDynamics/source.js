@@ -261,7 +261,7 @@ class FractalPlot {
     if(this._fractType === "param") {
       this.z0 = reim(this.c);
     } else {
-      this.z0 = reim(preset.z0);
+      this.z0 = preset.z0;//reim(preset.z0);
     }
   }
 
