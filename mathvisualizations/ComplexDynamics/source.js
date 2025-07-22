@@ -297,6 +297,11 @@ class FractalPlot {
     }
   }
 
+  exportImage(imageName) { // Export image as PNG
+    this.cindy.exportPNG(imageName);
+  }
+    
+
   set isPtSelected(isSelected) {
     this._isPtSelected = isSelected;
   }
@@ -599,4 +604,20 @@ var apply_changes = function() {
   parameter_fract.ApplyPreset(getPresetDicts()[0]);
   parameter_fract.res = document.getElementById('inpdres').value;
   julia_fract.res = document.getElementById('inpjres').value;
+}
+
+
+
+
+// Utility Javascript functions
+
+// Save canvas to image file
+// Possible filetypes include: png,jpeg,svg,pdf
+var saveCanvasAs = function(canvas,filename,filetype) { 
+  var downloadLink = document.createElement('a');
+  downloadLink.download = filename + "." + filetype;
+  downloadLink.href = canvas.toDataURL("image/" + filetype);
+  downloadLink.click();
+  downloadLink.remove();
+  return true;
 }
