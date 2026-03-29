@@ -6,26 +6,41 @@
         <script type="text/javascript" src="../../assets/js/Cindy.js"></script>
         <script type="text/javascript" src="../../assets/js/CindyGL.js"></script>
         <link rel="stylesheet" href="../../assets/css/CindyJS.css" />
+        <link rel="icon" href="../../images/favicon.ico">
   </head>
+
+
+
+
+
+
 	<body style="font-family:Arial;">
 
 
 
+        <!-- Import fractal plot source Javascript code !-->
+        <!-- <script src="RiemannSource.js" type="text/javascript"></script>  !-->
+
+        <!-- Instantiate the parameter space and dynamical plane javascript objects !-->
+        <!--
+        <script type="text/javascript">
+            var test_plot = new RiemannPlot("test_plot",plot_preset_dict["disk"],"TestPlotCanvas","TestPlotCanvas",
+                {
+                    move:       [],
+                    keydown:    []
+                },
+                500,500,500);
+
+            //document.addEventListener("keyup", event => {if (event.key=="Enter") {apply_changes();}}); // Apply changes when enter is pressed
+        </script>
+
+        <h2>Test Plot</h2>
+            <canvas id="TestPlotCanvas"></canvas>
+        !-->
+
+
     	<script id='init' type='text/cindyscript'>
- 			drawarrow(a,b,col,alp):=(
-	    		regional(n);
-	           	n=b-a;
-	           	n=n/|n|*1.4;
-	           	p=(n_2,-n_1);
-	           	draw(a,b-n*.1,color->col,size->4,alpha->alp);
-	           	fillpoly([b-n*.17+p*.07,b,b-n*.17-p*.07,b-n*.1],color->col,alpha->alp)
-        	);
-	        drawl(a,b,col,alp):=(
-	           draw(a,b,color->col,size->2,alpha->alp);
-
-	        );
-
-
+            createimage("main_plot", 500, 500);
 			label=false;
 			snap=false;
 			f(z):=1+z+(c/2)*z^2;
@@ -74,7 +89,7 @@
         </script>
 
         <script id='firstDrawing' type='text/cindyscript'>
-
+            drawimage([0,0],[2,0], "main_plot");
             x=S.x;
             if(x<S1.x,x=S1.x);
             if(x>S2.x,x=S2.x);
@@ -93,7 +108,7 @@
             if(x>U2.x,x=U2.x);
             U.xy=(x,U1.y);
             gr=|U,U1|/|U1,U2|*40;
-            print(gr);
+            //print(gr);
 
 
 
@@ -162,6 +177,7 @@
     		drawtext(T1+(.1,.1),"b="+format(b,2),size->12);
     		drawtext(U1+(.1,.1),"grid size",size->12);
 
+            clearimage("main_plot");
         </script>
 
 
