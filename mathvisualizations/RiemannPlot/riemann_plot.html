@@ -5,8 +5,18 @@
 <!DOCTYPE html>
 <html lang="en">
     <head>
+<<<<<<< HEAD
+<<<<<<< HEAD
         <meta charset="utf-8">
         <title>Conformal Map Visualizer</title>
+=======
+        <meta charset="utf-8" />
+        <title>Domain Coloring</title>
+>>>>>>> cc34fe4 (Added project gallery and domain coloring tool.)
+=======
+        <meta charset="utf-8">
+        <title>Conformal Map Visualizer</title>
+>>>>>>> ad6b2f5 (Separate conformal map and domain coloring into distinct tools.)
         <script type="text/javascript" src="../../assets/js/Cindy.js"></script>
         <script type="text/javascript" src="../../assets/js/CindyGL.js"></script>
         <link rel="stylesheet" href="../../assets/css/CindyJS.css" />
@@ -14,6 +24,8 @@
     </head>
 
     <body style="font-family: Arial">
+<<<<<<< HEAD
+<<<<<<< HEAD
         <h1 style="margin-bottom: 0em;">Conformal Map Visualizer</h1>
 
         <script id='init' type='text/cindyscript'>
@@ -236,5 +248,265 @@
         <footer>
             <p>Created by Andrew Graven. Last updated 4/13/26</p>
         </footer>
+=======
+        <h1 style="margin-bottom: 0em;">Domain Coloring</h1>
+=======
+        <h1 style="margin-bottom: 0em;">Conformal Map Visualizer</h1>
+>>>>>>> ad6b2f5 (Separate conformal map and domain coloring into distinct tools.)
+
+        <script id='init' type='text/cindyscript'>
+            // Real parameters (updated from HTML inputs)
+            a = 1;
+            b = 1;
+
+            // Complex function to visualize
+            f(z) := 1 + z + z^2/2;
+            setfunction(t) := (parse("f(z):=" + t));
+
+            exteriorMap = false;
+
+            // HSV to RGB conversion
+            hsvToRGB(h, s, v) := (
+                regional(j, fr, p, q, t);
+                h = (h - floor(h)) * 6;
+                j = floor(h);
+                fr = h - j;
+                p = 1 - s;
+                q = 1 - s * fr;
+                t = 1 - s * (1 - fr);
+                if(j == 0, [1, t, p],
+                if(j == 1, [q, 1, p],
+                if(j == 2, [p, 1, t],
+                if(j == 3, [p, q, 1],
+                if(j == 4, [t, p, 1],
+                [1, p, q]))))) * v
+            );
+
+            // Domain color: encodes arg(z) as hue, |z| as brightness modulation
+            color(z) := (
+                regional(n, zfract, grey1, grey2);
+                n = 12;
+                z = log(z) / (2 * pi);
+                zfract = n * z - floor(n * z);
+                grey1 = im(zfract);
+                grey2 = re(zfract);
+                hsvToRGB(im(z), 1., .5 + .5 * re(sqrt(grey1 * grey2)))
+            );
+        </script>
+
+        <script id='firstDrawing' type='text/cindyscript'>
+            // Draw coordinate axes
+            draw(line((0,1,0)), color->(0,0,0), size->0.5);
+            draw(line((1,0,0)), color->(0,0,0), size->0.5);
+
+<<<<<<< HEAD
+    <table style="width:900px">
+        <tr>
+            <td style="vertical-align: top; width: 50%;">
+                <h4 style="margin-bottom: -.7em;">About domain coloring</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;">Each point z in the plane is colored according to the value f(z). Hue encodes the argument of f(z), cycling through the spectrum as arg(f(z)) goes from 0 to 2π.</li>
+                    <li style="padding-bottom: 0.2em;">Brightness is modulated logarithmically by |f(z)|, creating concentric rings around zeros (black points where all colors meet) and poles (bright regions where colors rotate rapidly).</li>
+                    <li>Branch cuts appear as sharp color discontinuities. The number of full color rotations around a point equals the order of the zero or pole there.</li>
+                </ul>
+            </td>
+            <td style="vertical-align: top; width: 50%;">
+                <h4 style="margin-bottom: -.7em;">Controls</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;">Click and drag to pan the view.</li>
+                    <li style="padding-bottom: 0.2em;">+/− keys to zoom in/out; arrow keys to pan.</li>
+                    <li>Press Enter or click "apply changes" to update after editing any input field.</li>
+                </ul>
+                <h4 style="margin-bottom: -.7em;">Predefined objects</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;"><b>Constants:</b> e, pi, i.</li>
+                    <li><b>Operations:</b> z*w, z^w, z+w, z−w, z/w, abs(z), sqrt, exp, log, sin, cos, tan, arcsin, arccos, arctan, re, im, conjugate, lambertw.</li>
+                </ul>
+            </td>
+        </tr>
+    </table>
+    <h4 style="margin-top: -.4em;">Contact me at andrew@graven.com with any comments, suggestions, or feature requests.</h4>
+    <br><br><br>
+    <footer id="footer">
+        <p class="copyright">Created by Andrew Graven. Last updated 4/13/26</p>
+    </footer>
+>>>>>>> cc34fe4 (Added project gallery and domain coloring tool.)
+=======
+            // Read interactive parameter points
+            c = complex(PC);
+            d = complex(PD);
+
+            // Grid resolution slider
+            x = U.x;
+            if(x < U1.x, x = U1.x);
+            if(x > U2.x, x = U2.x);
+            U.xy = (x, U1.y);
+            gr = |U, U1| / |U1, U2| * 38 + 3;  // maps slider to range [3, 41]
+
+            thetaRes = round(gr);
+            rRes     = round(gr);
+            eps      = 0.0001;
+            z        = 0 + i*0;  // center of the preimage disk
+
+            thetas = pi * (-thetaRes..(thetaRes+1)) / thetaRes;
+            rs     = (1..rRes) / rRes;
+
+            if(exteriorMap,
+                // Draw image of the exterior of the unit disk
+                rs = apply(rs, exp(2.5 * #));
+                apply(thetas, theta,
+                    apply(rs, r,
+                        rp = r * exp(2.5 / rRes);
+                        dfval = (f(z + r*exp(i*theta) + eps) - f(z + r*exp(i*theta) - eps)) / (2*eps);
+                        connect([gauss(f(z + r*exp(i*theta))),  gauss(f(z + rp*exp(i*theta)))],              size->2, color->color(dfval));
+                        connect([gauss(f(z + r*exp(i*theta))),  gauss(f(z + r*exp(i*(theta + pi/thetaRes))))], size->2, color->color(dfval));
+                    );
+                ),
+                // Draw image of the unit disk
+                apply(thetas, theta,
+                    apply(rs, r,
+                        rm = r - 1/rRes;
+                        dfval = (f(z + r*exp(i*theta) + eps) - f(z + r*exp(i*theta) - eps)) / (2*eps);
+                        connect([gauss(f(z + rm*exp(i*theta))), gauss(f(z + r*exp(i*theta)))],               size->2, color->color(dfval));
+                        connect([gauss(f(z + r*exp(i*theta))),  gauss(f(z + r*exp(i*(theta + pi/thetaRes))))], size->2, color->color(dfval));
+                    );
+                )
+            );
+
+            // Labels
+            drawtext(PC + (.1, .1), "c=" + format(c, 3), color->(0.8, 0, 0),   size->14);
+            drawtext(PD + (.1, .1), "d=" + format(d, 3), color->(0,   0, 0.8), size->14);
+            drawtext(U1 + (.1, .1), "grid", size->12);
+        </script>
+
+        <div style="position:relative; display:inline-block;">
+            <canvas id="CSCanvas" width="800" height="500"
+                style="border:2px solid #000000;"></canvas>
+            <div style="font-size:16px; position:absolute; top:10px; left:10px;
+                        background:rgba(255,255,255,0.88); padding:4px 10px; border-radius:4px;">
+                f(z) =&nbsp;<input id="inpf" type="text" value="1+z+z^2/2"
+                    onkeypress="typ(event, this)" size="28" style="font-size:16px;">
+            </div>
+        </div>
+
+        <script type="text/javascript">
+            var gslp = [
+                {name:"PC", type:"Free", pos:[-1,  0.4], color:[1,   0,   0  ], pinned:false, size:4},
+                {name:"PD", type:"Free", pos:[1,  -1.5], color:[0,   0,   0.8], pinned:false, size:4},
+                {name:"U1", type:"Free", pos:[-8,  -3 ], color:[0,   0,   0  ], pinned:true,  size:2},
+                {name:"U2", type:"Free", pos:[-4,  -3 ], color:[0,   0,   0  ], pinned:true,  size:2},
+                {name:"U",  type:"Free", pos:[-7,  -3 ], color:[1,   0.9, 0  ], pinned:false, size:4},
+                {name:"l2", type:"Segment", args:["U1","U2"], color:[0,0,0], size:2},
+            ];
+
+            var cdy = createCindy({
+                canvasname: "CSCanvas",
+                movescript:  "firstDrawing",
+                initscript:  "init",
+                geometry:    gslp,
+                grid:        1,
+                snap:        true,
+                transform:   [{scale:2}, {translate:[3, 0]}],
+            });
+            setTimeout(function() { document.onkeydown = {}; }, 1000);
+
+            // Apply f(z) on Enter key in the input field
+            var typ = function(a, b) {
+                var chCode = ('charCode' in event) ? event.charCode : event.keyCode;
+                if (chCode == 13) {
+                    cdy.evokeCS('setfunction("' + b.value + '");');
+                }
+            };
+
+            // Load a preset: set f, and optionally default a and b
+            var define = function(expr, aval, bval) {
+                document.getElementById("inpf").value = expr;
+                if (aval !== undefined) document.getElementById("inpa").value = aval;
+                if (bval !== undefined) document.getElementById("inpb").value = bval;
+                var av = (aval !== undefined) ? aval : parseFloat(document.getElementById("inpa").value);
+                var bv = (bval !== undefined) ? bval : parseFloat(document.getElementById("inpb").value);
+                cdy.evokeCS('a=' + av + '; b=' + bv + '; setfunction("' + expr + '");');
+            };
+
+            // Push a, b values from HTML inputs into Cindy
+            var apply_ab = function() {
+                var a = parseFloat(document.getElementById("inpa").value);
+                var b = parseFloat(document.getElementById("inpb").value);
+                cdy.evokeCS('a=' + a + '; b=' + b + ';');
+            };
+
+            // Toggle interior / exterior map
+            var toggle_exterior = function() {
+                cdy.evokeCS('exteriorMap = !exteriorMap;');
+                var btn = document.getElementById("btnExt");
+                btn.textContent = (btn.textContent === "Interior") ? "Exterior" : "Interior";
+            };
+        </script>
+
+        <br>
+        <table style="margin-top: 0.5em;">
+            <tr style="vertical-align:top;">
+                <td style="padding-right: 2em;">
+                    <b>Parameters</b><br>
+                    a =&nbsp;<input id="inpa" type="text" value="1" size="4" style="font-size:15px">
+                    &nbsp;b =&nbsp;<input id="inpb" type="text" value="1" size="4" style="font-size:15px">
+                    &nbsp;<button onclick="apply_ab()" style="font-size:15px">Apply</button>
+                </td>
+                <td style="padding-right: 2em;">
+                    <b>View</b><br>
+                    <button id="btnExt" onclick="toggle_exterior()" style="font-size:15px">Interior</button>
+                </td>
+                <td>
+                    <b>Presets</b><br>
+                    <button style="width:110px;" onclick='define("c*z");'>c·z</button>
+                    <button style="width:110px;" onclick='define("c*z+d");'>c·z + d</button>
+                    <button style="width:110px;" onclick='define("z^2+c");'>z² + c</button>
+                    <button style="width:110px;" onclick='define("1/z");'>1/z</button><br>
+                    <button style="width:110px;" onclick='define("exp(a*z)");'>exp(a·z)</button>
+                    <button style="width:110px;" onclick='define("sin(a*z)");'>sin(a·z)</button>
+                    <button style="width:110px;" onclick='define("z^a",2);'>z^a</button>
+                    <button style="width:110px;" onclick='define("z+1/z");'>z + 1/z</button><br>
+                    <button style="width:110px;" onclick='define("sqrt(z)");'>sqrt(z)</button>
+                    <button style="width:110px;" onclick='define("arctan(z)");'>arctan(z)</button>
+                    <button style="width:110px;" onclick='define("(z-c)/(c*z-1)");'>Möbius</button>
+                    <button style="width:110px;" onclick='define("1+z+z^2/2");'>1+z+z²/2</button>
+                </td>
+            </tr>
+        </table>
+
+        <table style="width:900px; margin-top: 1em;">
+            <tr>
+                <td style="vertical-align:top; width:50%;">
+                    <h4 style="margin-bottom:-.7em;">About</h4>
+                    <ul style="text-align:left;">
+                        <li style="padding-bottom:0.2em;">This tool draws the image of the unit disk (or its exterior) under a complex map f. A polar grid of circles and radial rays is drawn in the domain and transported through f into the range.</li>
+                        <li style="padding-bottom:0.2em;">Grid lines are colored by the argument of f′(z), making it easy to see how f rotates and stretches infinitesimal shapes. Where f′(z) = 0 (critical points), colors become singular.</li>
+                        <li>The red point c and blue point d are complex parameters that can be dragged on the canvas to update the map in real time.</li>
+                    </ul>
+                </td>
+                <td style="vertical-align:top; width:50%;">
+                    <h4 style="margin-bottom:-.7em;">Controls</h4>
+                    <ul style="text-align:left;">
+                        <li style="padding-bottom:0.2em;">Type a function in the f(z) field and press <b>Enter</b> to apply.</li>
+                        <li style="padding-bottom:0.2em;">Drag the red (<b>c</b>) or blue (<b>d</b>) point to update complex parameters live.</li>
+                        <li style="padding-bottom:0.2em;">Set <b>a</b> and <b>b</b> (real-valued parameters) and press <b>Apply</b>.</li>
+                        <li>Drag the yellow <b>grid</b> slider to change the grid density.</li>
+                    </ul>
+                    <h4 style="margin-bottom:-.7em;">Predefined objects</h4>
+                    <ul style="text-align:left;">
+                        <li><b>Constants:</b> e, pi, i.</li>
+                        <li><b>Parameters:</b> a, b (real); c, d (complex, draggable).</li>
+                        <li>abs, sqrt, exp, log, sin, cos, tan, arcsin, arccos, arctan, re, im, conjugate.</li>
+                    </ul>
+                </td>
+            </tr>
+        </table>
+
+        <h4 style="margin-top:-.4em;">Contact me at andrew@graven.com with any comments, suggestions, or feature requests.</h4>
+        <br><br><br>
+        <footer>
+            <p>Created by Andrew Graven. Last updated 4/13/26</p>
+        </footer>
+>>>>>>> ad6b2f5 (Separate conformal map and domain coloring into distinct tools.)
     </body>
 </html>
