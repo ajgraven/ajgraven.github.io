@@ -1,263 +1,135 @@
+<!--
+    python -m http.server
+    http://localhost:8000/mathvisualizations/RiemannPlot/riemann_plot.html
+-->
 <!DOCTYPE html>
 <html lang="en">
-	<head>
-		<meta charset="utf-8">
-    <title>Cindy JS</title>
+    <head>
+        <meta charset="utf-8" />
+        <title>Domain Coloring</title>
         <script type="text/javascript" src="../../assets/js/Cindy.js"></script>
         <script type="text/javascript" src="../../assets/js/CindyGL.js"></script>
         <link rel="stylesheet" href="../../assets/css/CindyJS.css" />
         <link rel="icon" href="../../images/favicon.ico">
-  </head>
+    </head>
 
+    <body style="font-family: Arial">
+        <h1 style="margin-bottom: 0em;">Domain Coloring</h1>
 
-
-
-
-
-	<body style="font-family:Arial;">
-
-
-
-        <!-- Import fractal plot source Javascript code !-->
-        <!-- <script src="RiemannSource.js" type="text/javascript"></script>  !-->
-
-        <!-- Instantiate the parameter space and dynamical plane javascript objects !-->
-        <!--
-        <script type="text/javascript">
-            var test_plot = new RiemannPlot("test_plot",plot_preset_dict["disk"],"TestPlotCanvas","TestPlotCanvas",
-                {
-                    move:       [],
-                    keydown:    []
-                },
-                500,500,500);
-
-            //document.addEventListener("keyup", event => {if (event.key=="Enter") {apply_changes();}}); // Apply changes when enter is pressed
-        </script>
-
-        <h2>Test Plot</h2>
-            <canvas id="TestPlotCanvas"></canvas>
-        !-->
-
-
-    	<script id='init' type='text/cindyscript'>
-            createimage("main_plot", 500, 500);
-			label=false;
-			snap=false;
-			f(z):=1+z+(c/2)*z^2;
-
-			setfunction(t):=(
-			  parse("f(z):="+t);
-			);
-
-			sc=false;
-			sx=false;
-			sy=false;
-
-			hsvToRGB(h, s, v) := (
-				regional(j, p, q, t, f);
-
-				h = (h-floor(h))*6;
-
-				j = floor(h);
-				f = h - j;
-
-				p = 1 - s;
-				q = 1 - s*f;
-				t = 1 - s*(1-f);
-
-				if(j == 0, [1, t, p],
-				if(j == 1, [q, 1, p],
-				if(j == 2, [p, 1, t],
-				if(j == 3, [p, q, 1],
-				if(j == 4, [t, p, 1],
-				if(j == 5, [1, p, q]))))))*v
-			);
-
-			color(z) := ( //what color should be given to a complex number z?
-				regional(n, grey1, grey2);
-				n = 12;
-				z = log(z)/(2*pi);
-
-				zfract = n*z - floor(n*z); //value of n*z in C mod Z[i]
-
-				grey1 = im(zfract);
-				grey2 = re(zfract);
-
-				hsvToRGB(im(z), 1., .5+.5*re(sqrt(grey1*grey2)))
-			);
-
-        </script>
-
-        <script id='firstDrawing' type='text/cindyscript'>
-            drawimage([0,0],[2,0], "main_plot");
-            x=S.x;
-            if(x<S1.x,x=S1.x);
-            if(x>S2.x,x=S2.x);
-            S.xy=(x,S1.y);
-            a=(8*(|S,S1|/|S1,S2|))-4;
-
-            x=T.x;
-            if(x<T1.x,x=T1.x);
-            if(x>T2.x,x=T2.x);
-            T.xy=(x,T1.y);
-
-            b=(8*(|T,T1|/|T1,T2|))-4;
-
-            x=U.x;
-            if(x<U1.x,x=U1.x);
-            if(x>U2.x,x=U2.x);
-            U.xy=(x,U1.y);
-            gr=|U,U1|/|U1,U2|*40;
-            //print(gr);
-
-
-
-
-            draw(line((0,1,0)),color->(0,0,0),size->0.5);
-            draw(line((1,0,0)),color->(0,0,0),size->0.5);
-         	c=complex(PC);
-       		d=complex(PD);
-
-
-            z=0+i*0;
-
-
-            exteriorMap = false;
-
-
-            /////////////////////////////////////////////
-            ///////// Plot image of Riemann map /////////
-            /////////////////////////////////////////////
-            // Set constants
-            thetaRes=gr; // number of theta points
-            rRes = gr; // number of radial points
-            eps = .0001; // secant approximation to derivative
-
-            thetas = pi*(-thetaRes..(thetaRes+1))/thetaRes; // Generate array of theta values
-            rs     = (1..rRes)/rRes; // Generate array of radial values
-            if(exteriorMap,
-                // Plot image of exterior Riemann map
-                rs     = apply(rs,exp(2.5*#)); // Generate array of radial values for interior Riemann map
-                apply(thetas,theta,
-                    apply(rs,r,
-                        rp = r*exp(2.5/rRes);
-                        dfval = (f(z+r*exp(i*theta)+eps)-f(z+r*exp(i*theta)-eps))/(2*eps);
-                        connect([gauss(f(z+r*exp(i*theta))),gauss(f(z+rp*exp(i*theta)))],size->2,color->color(dfval));
-                        connect([gauss(f(z+r*exp(i*theta))),gauss(f(z+r*exp(i*(theta+pi/thetaRes))))],size->2,color->color(dfval));
-                    );
-                ),
-                // Plot image of interior Riemann map
-                apply(thetas,theta,
-                	apply(rs,r,
-                        rm=r-1/rRes;
-                		dfval = (f(z+r*exp(i*theta)+eps)-f(z+r*exp(i*theta)-eps))/(2*eps);
-                		connect([gauss(f(z+rm*exp(i*theta))),gauss(f(z+r*exp(i*theta)))],size->2,color->color(dfval));
-                        connect([gauss(f(z+r*exp(i*theta))),gauss(f(z+r*exp(i*(theta+pi/thetaRes))))],size->2,color->color(dfval));
-                	);
-                );
-            );
-
-            //apply(rs,r,
-            //	apply(thetas,theta,
-            //		dfval = (f(z+r*exp(i*theta)+eps)-f(z+r*exp(i*theta)-eps))/(2*eps);
-            //		connect([gauss(f(z+r*exp(i*theta))),gauss(f(z+r*exp(i*(theta+pi/thetaRes))))],size->2,color->color(dfval));
-            //	);
-            //);
-
-
-
-            //draw(gauss(f(0)),color->(0,0,0),size->3);
-    		//drawtext(gauss(f(0))+(.1,.1),"f(0)");
-
-    		drawtext(S+(.1,.1),"a");
-    		drawtext(T+(.1,.1),"b");
-    		drawtext(PC+(.1,.1),"c");
-    		drawtext(PD+(.1,.1),"d");
-    		drawtext(S1+(.1,.1),"a="+format(a,2),size->12);
-    		drawtext(T1+(.1,.1),"b="+format(b,2),size->12);
-    		drawtext(U1+(.1,.1),"grid size",size->12);
-
-            clearimage("main_plot");
-        </script>
-
-
-
-        <div style="position:relative">
-        <canvas  id="CSCanvas" width=800 height=500  style="border:2px solid #000000; top:0px; left:0px;"></canvas>
-                   <div style="font-size:18px; position:absolute; top:23px; left:20px; display:inline;z-index:4">
-
-               f(z)= <input id="f" type="text" name="inp" value="1+z+(c/2)*z^2"  onkeypress="typ(event, this)" size="30" style="font-size:18px; background-color:#FFEEDD;">
-</div>
-
-
-</div>
+        <script src="RiemannSource.js" type="text/javascript"></script>
 
         <script type="text/javascript">
+            var plot = new DomainPlot("plot", presets["z^2"], "DCSCanvas", "DCSCanvas", 600, 600, 600);
+            document.addEventListener("keyup", event => { if (event.key === "Enter") { apply_changes(); } });
+        </script>
 
-            var gslp=[
-                {name:"O", type:"Free", pos:[0,0],color:[0,0,0],pinned:true,size:3},
-                {name:"B", type:"Free", pos:[.65,.5],color:[1,.9,0],size:3},
-                {name:"C", type:"Free", pos:[-3,3],color:[1,0,0],size:0.01},
-                {name:"PC", type:"Free", pos:[-1,.4],color:[1,0,0],pinned:false,size:3},
-                {name:"PD", type:"Free", pos:[-2,-2],color:[1,0,0],pinned:false,size:3},
+    <table cols=2 rows=1>
+        <tr style="vertical-align: top;">
+            <td>
+                <div style="text-align:center; position:relative; display:inline-block;">
+                    <canvas id="DCSCanvas"></canvas>
+                </div>
+            </td>
+            <td style="vertical-align: top; padding-left: 1.2em;">
+                <table>
+                    <tr>
+                        <td>
+                            <label for="inpf"><b>f(z)</b></label><br>
+                            <input type="text" id="inpf" value="z^2" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.5em;">
+                            <label for="inpcenter">center</label><br>
+                            <input type="text" id="inpcenter" value="0,0" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.5em;">
+                            <label for="inpzoom">zoom</label><br>
+                            <input type="text" id="inpzoom" value="0.5" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.5em;">
+                            <label for="inpres">resolution</label><br>
+                            <input type="text" id="inpres" value="600" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.7em;">
+                            <button onclick="apply_changes()" style="font-size:15px">apply changes</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 1.2em;">
+                            <label for="preset_select">Presets</label>
+                            <table id="preset_cell">
+                                <tr>
+                                    <th>
+                                        <select id="preset_select" style="font-size:15px">
+                                            <option value="z^2">z²</option>
+                                            <option value="z^3">z³</option>
+                                            <option value="1/z">1/z</option>
+                                            <option value="1/(z^2+1)">1/(z²+1)</option>
+                                            <option value="sin(z)">sin(z)</option>
+                                            <option value="cos(z)">cos(z)</option>
+                                            <option value="tan(z)">tan(z)</option>
+                                            <option value="exp(z)">exp(z)</option>
+                                            <option value="log(z)">log(z)</option>
+                                            <option value="sqrt(z)">sqrt(z)</option>
+                                            <option value="z+1/z">z + 1/z</option>
+                                            <option value="(z-1)/(z+1)">(z−1)/(z+1)</option>
+                                        </select>
+                                    </th>
+                                    <th>
+                                        <button onclick="apply_preset(document.getElementById('preset_select').value)" style="font-size:15px">apply</button>
+                                    </th>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 1.2em;">
+                            <b>Download plot</b><br>
+                            <input type="text" id="imgName" value="domain.png" size="14" style="font-size:15px">
+                            <button onclick="plot.exportImage(document.getElementById('imgName').value)" style="font-size:15px">Save</button>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
 
-
-                {name:"U1", type:"Free", pos:[-8,-3],color:[0,0,0],pinned:true,size:2},
-                {name:"U2", type:"Free", pos:[-4,-3],color:[0,0,0],pinned:true,size:2},
-                {name:"U", type:"Free", pos:[-7,-3],color:[1,0.9,0.0],pinned:false,size:4},
-                {name:"l2", type:"Segment", args:["U1","U2"],color:[0,0,0],pinned:false,size:2},
-                ];
-
-                cdy=createCindy({canvasname:"CSCanvas",
-                    movescript:"firstDrawing",
-                    initscript:"init",
-                    geometry:gslp,
-                    grid:1,
-                    snap:true,
-                    transform:[{scale:2},{translate:[3,0]}],
-                    }
-                );
-            setTimeout(function(){document.onkeydown={}}, 1000);
-
-
-var typ=function(a,b){
-    var chCode = ('charCode' in event) ? event.charCode : event.keyCode;
-    if(chCode==13){
-
-        cdy.evokeCS('setfunction("'+b.value+'");');
-    }
-}
-
-
-
-
-var define=function(a){
-
-    document.getElementById("f").value=a;
-
-    cdy.evokeCS('setfunction("'+a+'");');
-
-}
-
-
-</script>
-
-  <!--      END ADD-->
-
-
-
-<button style="width:100px;" onclick='define("c*z");' type="button" >c*z</button>
-<button style="width:100px;" onclick='define("c*z+d");' type="button" >c*z+d</button>
-<button style="width:100px;" onclick='define("1/z");' type="button" >1/z</button>
-<button style="width:100px;" onclick='define("exp(a*z)");' type="button" >exp(a*z)</button><br>
-<button style="width:100px;" onclick='define("sin(a*z)");' type="button" >sin(a*z)</button>
-<button style="width:100px;" onclick='define("z^a");' type="button" >z^a</button>
-<button style="width:100px;" onclick='define("arctan(z)");' type="button" >arctan(z)</button>
-<button style="width:100px;" onclick='define("sqrt(z)");' type="button" >sqrt(z)</button><br>
-<br>
-<br>
-
-
-
-	</body>
+    <table style="width:900px">
+        <tr>
+            <td style="vertical-align: top; width: 50%;">
+                <h4 style="margin-bottom: -.7em;">About domain coloring</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;">Each point z in the plane is colored according to the value f(z). Hue encodes the argument of f(z), cycling through the spectrum as arg(f(z)) goes from 0 to 2π.</li>
+                    <li style="padding-bottom: 0.2em;">Brightness is modulated logarithmically by |f(z)|, creating concentric rings around zeros (black points where all colors meet) and poles (bright regions where colors rotate rapidly).</li>
+                    <li>Branch cuts appear as sharp color discontinuities. The number of full color rotations around a point equals the order of the zero or pole there.</li>
+                </ul>
+            </td>
+            <td style="vertical-align: top; width: 50%;">
+                <h4 style="margin-bottom: -.7em;">Controls</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;">Click and drag to pan the view.</li>
+                    <li style="padding-bottom: 0.2em;">+/− keys to zoom in/out; arrow keys to pan.</li>
+                    <li>Press Enter or click "apply changes" to update after editing any input field.</li>
+                </ul>
+                <h4 style="margin-bottom: -.7em;">Predefined objects</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;"><b>Constants:</b> e, pi, i.</li>
+                    <li><b>Operations:</b> z*w, z^w, z+w, z−w, z/w, abs(z), sqrt, exp, log, sin, cos, tan, arcsin, arccos, arctan, re, im, conjugate, lambertw.</li>
+                </ul>
+            </td>
+        </tr>
+    </table>
+    <h4 style="margin-top: -.4em;">Contact me at andrew@graven.com with any comments, suggestions, or feature requests.</h4>
+    <br><br><br>
+    <footer id="footer">
+        <p class="copyright">Created by Andrew Graven. Last updated 4/13/26</p>
+    </footer>
+    </body>
 </html>
