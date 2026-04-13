@@ -1,3 +1,9 @@
+// Utility functions shared across Riemann visualization tools.
+// The main conformal map logic lives inline in riemann_plot.html.
+
+function addarrays(a, b)      { return a.map((e, i) => e + b[i]); }
+function subtractarrays(a, b) { return a.map((e, i) => e - b[i]); }
+function arraymult(arr, m)    { return arr.map(e => e * m); }
 // Preset dictionary: each entry has f (CindyScript expression), center, zoom
 var presets = {
   "z^2":         { f: "z^2",          center: [0, 0], zoom: 0.5  },
@@ -22,6 +28,9 @@ function subtractarrays(a, b) { return a.map((e, i) => e - b[i]); }
 function arraymult(arr, m)    { return arr.map(e => e * m); }
 
 
+var iniscript = function(preset, res) {
+  return `
+  use("CindyGL");
 
 var iniscript = function(preset, res) {
   return `
