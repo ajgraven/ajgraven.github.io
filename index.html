@@ -205,14 +205,28 @@ and whatever else
 
 								<div class="project-card">
 									<div class="project-card-thumb">
-										<img src="images/Mandelbrot_set.png" alt="Riemann Surface Plotter" />
+										<img src="images/Mandelbrot_set.png" alt="Conformal Map Visualizer" />
 									</div>
 									<div class="project-card-body">
-										<h3><a href="mathvisualizations/RiemannPlot/riemann_plot.html">Domain Coloring</a></h3>
-										<p class="caption">Browser-based visualization of Riemann surfaces via domain coloring.</p>
+										<h3><a href="mathvisualizations/RiemannPlot/riemann_plot.html">Conformal Map Visualizer</a></h3>
+										<p class="caption">Interactive visualization of how complex maps deform the unit disk.</p>
 										<details>
 											<summary>More</summary>
-											<p>Renders domain-colored plots of complex functions and their Riemann surfaces directly in the browser. Useful for developing geometric intuition about branch cuts, poles, and conformal maps.</p>
+											<p>Draws the image of a polar grid on the unit disk (or its exterior) under a user-defined complex function f(z). Grid lines are colored by arg(f′(z)), revealing critical points and conformal structure. Supports draggable complex parameters, real parameter sliders, and a library of preset maps.</p>
+										</details>
+									</div>
+								</div>
+
+								<div class="project-card">
+									<div class="project-card-thumb">
+										<img src="images/exp_julia.jpg" alt="Domain Coloring" />
+									</div>
+									<div class="project-card-body">
+										<h3><a href="mathvisualizations/DomainColoring/domain_coloring.html">Domain Coloring</a></h3>
+										<p class="caption">GPU-accelerated domain coloring of complex functions.</p>
+										<details>
+											<summary>More</summary>
+											<p>Colors each pixel z by f(z): hue encodes argument, brightness encodes log-magnitude. Zeros appear as black points where all colors converge; poles appear as bright spots where colors cycle rapidly. Supports custom functions, pan/zoom, 12 presets, and PNG export.</p>
 										</details>
 									</div>
 								</div>
