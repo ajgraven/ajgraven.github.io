@@ -1,0 +1,135 @@
+<!--
+    python -m http.server
+    http://localhost:8000/mathvisualizations/DomainColoring/domain_coloring.html
+-->
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>Domain Coloring</title>
+        <script type="text/javascript" src="../../assets/js/Cindy.js"></script>
+        <script type="text/javascript" src="../../assets/js/CindyGL.js"></script>
+        <link rel="stylesheet" href="../../assets/css/CindyJS.css" />
+        <link rel="icon" href="../../images/favicon.ico">
+    </head>
+
+    <body style="font-family: Arial">
+        <h1 style="margin-bottom: 0em;">Domain Coloring</h1>
+
+        <script src="DomainColoringSource.js" type="text/javascript"></script>
+
+        <script type="text/javascript">
+            var plot = new DomainPlot("plot", presets["z^2"], "DCSCanvas", "DCSCanvas", 600, 600, 600);
+            document.addEventListener("keyup", event => { if (event.key === "Enter") { apply_changes(); } });
+        </script>
+
+    <table cols=2 rows=1>
+        <tr style="vertical-align: top;">
+            <td>
+                <div style="text-align:center; position:relative; display:inline-block;">
+                    <canvas id="DCSCanvas"></canvas>
+                </div>
+            </td>
+            <td style="vertical-align: top; padding-left: 1.2em;">
+                <table>
+                    <tr>
+                        <td>
+                            <label for="inpf"><b>f(z)</b></label><br>
+                            <input type="text" id="inpf" value="z^2" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.5em;">
+                            <label for="inpcenter">center</label><br>
+                            <input type="text" id="inpcenter" value="0,0" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.5em;">
+                            <label for="inpzoom">zoom</label><br>
+                            <input type="text" id="inpzoom" value="0.5" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.5em;">
+                            <label for="inpres">resolution</label><br>
+                            <input type="text" id="inpres" value="600" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.7em;">
+                            <button onclick="apply_changes()" style="font-size:15px">apply changes</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 1.2em;">
+                            <label for="preset_select">Presets</label>
+                            <table id="preset_cell">
+                                <tr>
+                                    <th>
+                                        <select id="preset_select" style="font-size:15px">
+                                            <option value="z^2">z²</option>
+                                            <option value="z^3">z³</option>
+                                            <option value="1/z">1/z</option>
+                                            <option value="1/(z^2+1)">1/(z²+1)</option>
+                                            <option value="sin(z)">sin(z)</option>
+                                            <option value="cos(z)">cos(z)</option>
+                                            <option value="tan(z)">tan(z)</option>
+                                            <option value="exp(z)">exp(z)</option>
+                                            <option value="log(z)">log(z)</option>
+                                            <option value="sqrt(z)">sqrt(z)</option>
+                                            <option value="z+1/z">z + 1/z</option>
+                                            <option value="(z-1)/(z+1)">(z−1)/(z+1)</option>
+                                        </select>
+                                    </th>
+                                    <th>
+                                        <button onclick="apply_preset(document.getElementById('preset_select').value)" style="font-size:15px">apply</button>
+                                    </th>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 1.2em;">
+                            <b>Download plot</b><br>
+                            <input type="text" id="imgName" value="domain.png" size="14" style="font-size:15px">
+                            <button onclick="plot.exportImage(document.getElementById('imgName').value)" style="font-size:15px">Save</button>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+
+    <table style="width:900px">
+        <tr>
+            <td style="vertical-align: top; width: 50%;">
+                <h4 style="margin-bottom: -.7em;">About domain coloring</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;">Each point z in the plane is colored according to the value f(z). Hue encodes the argument of f(z), cycling through the spectrum as arg(f(z)) goes from 0 to 2π.</li>
+                    <li style="padding-bottom: 0.2em;">Brightness is modulated logarithmically by |f(z)|, creating concentric rings around zeros (black points where all colors meet) and poles (bright regions where colors rotate rapidly).</li>
+                    <li>Branch cuts appear as sharp color discontinuities. The number of full color rotations around a point equals the order of the zero or pole there.</li>
+                </ul>
+            </td>
+            <td style="vertical-align: top; width: 50%;">
+                <h4 style="margin-bottom: -.7em;">Controls</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;">Click and drag to pan the view.</li>
+                    <li style="padding-bottom: 0.2em;">+/− keys to zoom in/out; arrow keys to pan.</li>
+                    <li>Press Enter or click "apply changes" to update after editing any input field.</li>
+                </ul>
+                <h4 style="margin-bottom: -.7em;">Predefined objects</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;"><b>Constants:</b> e, pi, i.</li>
+                    <li><b>Operations:</b> z*w, z^w, z+w, z−w, z/w, abs(z), sqrt, exp, log, sin, cos, tan, arcsin, arccos, arctan, re, im, conjugate, lambertw.</li>
+                </ul>
+            </td>
+        </tr>
+    </table>
+    <h4 style="margin-top: -.4em;">Contact me at andrew@graven.com with any comments, suggestions, or feature requests.</h4>
+    <br><br><br>
+    <footer id="footer">
+        <p class="copyright">Created by Andrew Graven. Last updated 4/13/26</p>
+    </footer>
+    </body>
+</html>
