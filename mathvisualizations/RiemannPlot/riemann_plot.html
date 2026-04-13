@@ -225,7 +225,7 @@
             b = 1;
 
             // Complex function to visualize
-            f(z) := 1 + z + z^2/2;
+            f(z) := (z-c)/(conj(c)*z-1);
             setfunction(t) := (parse("f(z):=" + t));
 
             exteriorMap = false;
@@ -335,7 +335,7 @@
             <canvas id="CSCanvas" width="800" height="500"></canvas>
             <div class="fn-overlay">
                 <span>f (z) =</span>
-                <input id="inpf" type="text" value="1+z+z^2/2"
+                <input id="inpf" type="text" value="(z-c)/(conj(c)*z-1)"
                     onkeypress="typ(event, this)" autocomplete="off" spellcheck="false">
             </div>
         </div>
@@ -393,7 +393,7 @@
                 "z+1/z":         { a:1, b:1 },
                 "sqrt(z)":       { a:1, b:1 },
                 "arctan(z)":     { a:1, b:1 },
-                "(z-c)/(c*z-1)": { a:1, b:1 },
+                "(z-c)/(conj(c)*z-1)": { a:1, b:1 },
             };
 
             var applyPreset = function() {
@@ -439,6 +439,7 @@
                 <span class="ctrl-label">Preset</span>
                 <div class="ctrl-row">
                     <select id="preset-sel">
+                        <option value="(z-c)/(conj(c)*z-1)" selected>Möbius: (z − c) / (c̄z − 1)</option>
                         <option value="1+z+z^2/2">1 + z + z²/2</option>
                         <option value="c*z">c · z</option>
                         <option value="c*z+d">c · z + d</option>
@@ -450,7 +451,6 @@
                         <option value="z^a">z ^ a</option>
                         <option value="sqrt(z)">sqrt(z)</option>
                         <option value="arctan(z)">arctan(z)</option>
-                        <option value="(z-c)/(c*z-1)">Möbius: (z − c) / (c̄z − 1)</option>
                     </select>
                     <button onclick="applyPreset()">Apply</button>
                 </div>
