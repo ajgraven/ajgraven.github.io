@@ -1,0 +1,145 @@
+<!--
+    python -m http.server
+    http://localhost:8000/mathvisualizations/PotentialTheory/potential_theory.html
+-->
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>Logarithmic Potential Explorer</title>
+        <script type="text/javascript" src="../../assets/js/Cindy.js"></script>
+        <script type="text/javascript" src="../../assets/js/CindyGL.js"></script>
+        <link rel="stylesheet" href="../../assets/css/CindyJS.css" />
+        <link rel="icon" href="../../images/favicon.ico">
+    </head>
+
+    <body style="font-family: Arial">
+        <h1 style="margin-bottom: 0em;">Logarithmic Potential Explorer</h1>
+
+        <script src="PotentialTheorySource.js" type="text/javascript"></script>
+
+        <script type="text/javascript">
+            var plot = new PotentialPlot("plot", pt_presets["quadrupole"], "PTCanvas", "PTCanvas", 600, 600, 600);
+            document.addEventListener("keyup", event => { if (event.key === "Enter") { apply_changes(); } });
+        </script>
+
+    <table cols=2 rows=1>
+        <tr style="vertical-align: top;">
+            <td>
+                <div style="text-align:center; position:relative; display:inline-block;">
+                    <canvas id="PTCanvas"></canvas>
+                </div>
+            </td>
+            <td style="vertical-align: top; padding-left: 1.2em;">
+                <table>
+                    <tr>
+                        <td style="padding-top: 0.5em;">
+                            <label for="inpcenter">center</label><br>
+                            <input type="text" id="inpcenter" value="0,0" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.5em;">
+                            <label for="inpzoom">zoom</label><br>
+                            <input type="text" id="inpzoom" value="0.5" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.5em;">
+                            <label for="inpres">resolution</label><br>
+                            <input type="text" id="inpres" value="600" size="22" style="font-size:15px">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.7em;">
+                            <button onclick="apply_changes()" style="font-size:15px">apply changes</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 1.2em;">
+                            <b>Positive charges</b><br>
+                            <button id="btn-p1" onclick="toggle('p1')"
+                                style="color:white;background-color:#cc3333;padding:4px 8px;font-size:15px;border:none;border-radius:3px;cursor:pointer;margin:2px">+1</button>
+                            <button id="btn-p2" onclick="toggle('p2')"
+                                style="color:white;background-color:#cc3333;padding:4px 8px;font-size:15px;border:none;border-radius:3px;cursor:pointer;margin:2px">+2</button>
+                            <button id="btn-p3" onclick="toggle('p3')"
+                                style="color:white;background-color:#888888;padding:4px 8px;font-size:15px;border:none;border-radius:3px;cursor:pointer;margin:2px">+3</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 0.5em;">
+                            <b>Negative charges</b><br>
+                            <button id="btn-n1" onclick="toggle('n1')"
+                                style="color:white;background-color:#3333cc;padding:4px 8px;font-size:15px;border:none;border-radius:3px;cursor:pointer;margin:2px">&#8722;1</button>
+                            <button id="btn-n2" onclick="toggle('n2')"
+                                style="color:white;background-color:#3333cc;padding:4px 8px;font-size:15px;border:none;border-radius:3px;cursor:pointer;margin:2px">&#8722;2</button>
+                            <button id="btn-n3" onclick="toggle('n3')"
+                                style="color:white;background-color:#888888;padding:4px 8px;font-size:15px;border:none;border-radius:3px;cursor:pointer;margin:2px">&#8722;3</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 1.2em;">
+                            <label for="preset_select">Presets</label>
+                            <table id="preset_cell">
+                                <tr>
+                                    <th>
+                                        <select id="preset_select" style="font-size:15px">
+                                            <option value="quadrupole">quadrupole</option>
+                                            <option value="single_pos">single positive</option>
+                                            <option value="dipole">dipole</option>
+                                            <option value="two_pos">two positive</option>
+                                            <option value="full_hex">full hexagon</option>
+                                        </select>
+                                    </th>
+                                    <th>
+                                        <button onclick="apply_preset(document.getElementById('preset_select').value)" style="font-size:15px">apply</button>
+                                    </th>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding-top: 1.2em;">
+                            <b>Download plot</b><br>
+                            <input type="text" id="imgName" value="potential.png" size="14" style="font-size:15px">
+                            <button onclick="plot.exportImage(document.getElementById('imgName').value)" style="font-size:15px">Save</button>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+
+    <table style="width:900px">
+        <tr>
+            <td style="vertical-align: top; width: 50%;">
+                <h4 style="margin-bottom: -.7em;">About</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;">log|F(z)| = &Sigma; w<sub>k</sub> log|z &minus; z<sub>k</sub>| is the logarithmic potential of the charge distribution.</li>
+                    <li style="padding-bottom: 0.2em;">Hue = arg(F(z)) encodes the harmonic conjugate (stream function).</li>
+                    <li style="padding-bottom: 0.2em;">Equipotential lines appear as brightness level curves; gradient field lines appear as hue level curves.</li>
+                    <li>Zeros (red points) are positive charges; poles (blue points) are negative charges.</li>
+                </ul>
+            </td>
+            <td style="vertical-align: top; width: 50%;">
+                <h4 style="margin-bottom: -.7em;">Controls</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;">Click and drag charge points to move them.</li>
+                    <li style="padding-bottom: 0.2em;">Toggle charges on/off with the buttons above.</li>
+                    <li style="padding-bottom: 0.2em;">Arrow keys to pan; +/&minus; keys to zoom; Enter to apply input changes.</li>
+                    <li>Press Enter or click "apply changes" to update after editing any input field.</li>
+                </ul>
+                <h4 style="margin-bottom: -.7em;">Predefined objects</h4>
+                <ul style="text-align: left;">
+                    <li style="padding-bottom: 0.2em;"><b>Constants:</b> e, pi, i.</li>
+                    <li><b>Operations:</b> z*w, z^w, z+w, z&minus;w, z/w, abs(z), sqrt, exp, log, sin, cos, tan, arcsin, arccos, arctan, re, im, conjugate, lambertw.</li>
+                </ul>
+            </td>
+        </tr>
+    </table>
+    <br><br><br>
+    <footer id="footer">
+        <p class="copyright">Created by Andrew Graven. Last updated 4/13/26</p>
+    </footer>
+    </body>
+</html>
