@@ -1,221 +1,139 @@
-var plot_preset_dict = {
-  "disk":       {f:"z", zoom: 1, center: [0,0]}
+// Preset dictionary: each entry has f (CindyScript expression), center, zoom
+var presets = {
+  "z^2":         { f: "z^2",          center: [0, 0], zoom: 0.5  },
+  "z^3":         { f: "z^3",          center: [0, 0], zoom: 0.5  },
+  "1/z":         { f: "1/z",          center: [0, 0], zoom: 0.5  },
+  "1/(z^2+1)":   { f: "1/(z^2+1)",   center: [0, 0], zoom: 0.5  },
+  "sin(z)":      { f: "sin(z)",       center: [0, 0], zoom: 0.35 },
+  "cos(z)":      { f: "cos(z)",       center: [0, 0], zoom: 0.35 },
+  "tan(z)":      { f: "tan(z)",       center: [0, 0], zoom: 0.35 },
+  "exp(z)":      { f: "exp(z)",       center: [0, 0], zoom: 0.15 },
+  "log(z)":      { f: "log(z)",       center: [0, 0], zoom: 0.35 },
+  "sqrt(z)":     { f: "sqrt(z)",      center: [0, 0], zoom: 0.5  },
+  "z+1/z":       { f: "z+1/z",        center: [0, 0], zoom: 0.35 },
+  "(z-1)/(z+1)": { f: "(z-1)/(z+1)", center: [0, 0], zoom: 0.5  },
 };
 
 
-var iniscript = function(preset,res) {
+function addarrays(a, b)      { return a.map((e, i) => e + b[i]); }
+function subtractarrays(a, b) { return a.map((e, i) => e - b[i]); }
+function arraymult(arr, m)    { return arr.map(e => e * m); }
+
+
+var iniscript = function(preset, res) {
   return `
   use("CindyGL");
 
-  // Fixed constants
-  e = 2.71828182845904523536028747; // Euler's number
+  zoom   = ${preset.zoom};
+  center = [${preset.center[0]}, ${preset.center[1]}];
 
-  reim(z) := [re(z),im(z)];
+  f(z) := (${preset.f});
 
-  lwZeroApprox(z) := ( // Approximation of the principal branch of the Lambert W function near the origin
-  ezsqrt = sqrt(1 + e*z);
-      (12*ezsqrt*(45*sqrt(2) + 32*ezsqrt))/(sqrt(e)*(623 + 83*e*z + 372*sqrt(2)*ezsqrt))-1;
+  // Convert HSV (h,s,v each in [0,1]) to an RGB triple
+  hsvToRGB(h, s, v) := (
+    regional(j, fr, p, q, t);
+    h = (h - floor(h)) * 6;
+    j = floor(h);
+    fr = h - j;
+    p = 1.0 - s;
+    q = 1.0 - s * fr;
+    t = 1.0 - s * (1.0 - fr);
+    if(j == 0, [1, t, p],
+    if(j == 1, [q, 1, p],
+    if(j == 2, [p, 1, t],
+    if(j == 3, [p, q, 1],
+    if(j == 4, [t, p, 1],
+    [1, p, q]))))) * v
   );
 
-  lwInftyApprox(z) := log(z)-log(log(z))+log(log(z))/log(z); // Approximation of the principal branch of the Lambert W function near infinity
-
-  lambertw(z) :=( // Custom implementation of the Lambert W function
-      if(abs(z)<1.7,
-          w=lwZeroApprox(z),
-          w=lwInftyApprox(z)
-      );
-      repeat(5,
-          w=(w^2+z/exp(w))/(w+1);
-      );
-      w
+  // Standard domain coloring:
+  //   hue     = arg(w) / (2 pi)
+  //   value   = modulated logarithmically by |w|, creating rings around zeros/poles
+  domainColor(w) := (
+    regional(n, logw, zfract, grey1, grey2);
+    n = 12;
+    logw = log(w) / (2 * pi);
+    zfract = n * logw - floor(n * logw);
+    grey1 = im(zfract);
+    grey2 = re(zfract);
+    hsvToRGB(im(logw), 1.0, 0.5 + 0.5 * re(sqrt(grey1 * grey2)))
   );
 
-  arg(z) := arctan2(reim(z));
+  createimage("domain", ${res}, ${res});
+  `;
+};
 
 
-  // initial values of parameters
-  zoom = ${preset.zoom};
-  center = [${preset.center}];
+class DomainPlot {
+  constructor(varName, preset, canvasName, canvasID, canvasWidth = 600, canvasHeight = 600, res = 600) {
+    this._varName      = varName;
+    this._canvasName   = canvasName;
+    this._canvasID     = canvasID;
+    this._canvasWidth  = canvasWidth;
+    this._canvasHeight = canvasHeight;
+    this._res          = res;
+    this._f            = preset.f;
+    this._center       = preset.center.slice();
+    this._zoom         = preset.zoom;
+    this._mousepos     = [0, 0];
 
-  f(z) := (
-      ${preset.f};
-  );
+    var movescript = [
+      'colorplot(',
+      '  [center_1 - 1/zoom, center_2 - 1/zoom],',
+      '  [center_1 + 1/zoom, center_2 - 1/zoom],',
+      '  "domain",',
+      '  domainColor(f(complex(#)))',
+      ');',
+      'drawimage([0,0],[2,0],"domain");',
+    ].join('\n');
 
-  // Coordinate transformations
-  PltToCanvX(x) := (x-center_1)*zoom+1; // plot coordinate to canvas coordinate
-  PltToCanvY(y) := (y-center_2)*zoom+1; // plot coordinate to canvas coordinate
-  PltToCanvXY(XY) := [PltToCanvX(XY_1),PltToCanvY(XY_2)];
-  PltToCanvZ(z) := PltToCanvX(re(z))+i*PltToCanvY(im(z)); // plot coordinate to canvas coordinate
+    var keydownscript   = 'javascript("' + varName + '.keypress(\'"+"\\" + key()+"\'.charCodeAt(0))");';
+    var mousedragscript = 'javascript("' + varName + '.shift(arraymult(' + varName + '.mouseshift,1/' + varName + '.zoom));");';
+    var mousedownscript = 'javascript("' + varName + '.mouseshift === null;");';
 
-  CanvToPltX(x) := (x-1)/zoom+center_1; // canvas coordinate to plot coordinate
-  CanvToPltY(y) := (y-1)/zoom+center_2; // canvas coordinate to plot coordinate
-  CanvToPltXY(XY) := [CanvToPltX(XY_1),CanvToPltY(XY_2)];
-  CanvToPltZ(z) := CanvToPltX(re(z))+i*CanvToPltY(im(z)); // canvas coordinate to plot coordinate
-
-  //Colors
-  Z0.color  = (1,1,1);
-  colorFcn(u) := (
-      if(u==n,(0,0,0),
-          u = u/n;
-          u = (3*u/(2*u+1));
-          (4*u,1.3*u,(1-u)^2*.7);
-      );
-  );
-  `
-}
-
-function addarrays(a,b){ // add a pair of arrays elementwise
-    return a.map((e,i) => e + b[i]);
-}
-
-function subtractarrays(a,b){ // subtract a pair of arrays elementwise
-    return a.map((e,i) => e - b[i]);
-}
-
-function arraymult(arr,m){ // multiply an array by a scalar
-    return arr.map((e,i) => e*m);
-}
-
-
-class RiemannPlot {
-  constructor(varName, paramDict, canvasName, canvasID, callbacks = {}, canvasWidth = 500, canvasHeight = 500, res = 500) {
-    this._varName = varName; // object instance variable name (string)
-    this._canvasName = canvasName; // name of javascript canvas (string)
-    this._canvasID = canvasID; // canvas ID (string)
-    this._canvasWidth = canvasWidth; // canvas width in pixels (int)
-    this._canvasHeight = canvasHeight; // canvas height in pixels (int)
-    this._res = res; // resolution (res x res) (int)
-    this._callbacks = callbacks;
-    this._f = paramDict.f; // mapping function (string) f(z)="this._f" 
-    this._center = paramDict.center; // center of plot (array)
-    this._zoom = paramDict.zoom; // default zoom level
-    this._mousepos = [0,0]; // current position of mouse (in canvas coordinates)
-    this._mouseshift = [0,0]; //shift vector for change in mouse position (in canvas coordinates)
-    this._isPtSelected = false;
-    this._movescript = ''; // list of lines of JS code (strings) to be executed when any element of the canvas moves
-    this._keydownscript = ''; // list of lines of JS code (strings) to be executed when a key is pressed
-    this._mousemovescript = ''; // list of lines of JS code (strings) to be executed when the mouse is moved
-    this._mouseclickscript = ''; // list of lines of JS code (strings) to be executed when the mouse is clicked
-    this._mousedownscript = ''; // list of lines of JS code (strings) to be executed when the mouse is clicked down
-    this._mousedragscript = ''; // list of lines of JS code (strings) to be executed repeatedly when the mouse is being dragged
-    this._movescript = 'colorplot([center_1-1/zoom,center_2-1/zoom],[center_1+1/zoom,center_2-1/zoom],"julia",colorFcn(dynIter(complex(#), c)));' +
-        'drawimage([0,0],[2,0], "julia");' +
-        'connect(apply(dynKIter(CanvToPltZ(complex(Z0.xy)),c,nplot-1),reim(PltToCanvZ(#))),color->[1,1,1],size->1.8);' +
-        'drawtext(Z0+(.025,.025), "z0="+CanvToPltZ(complex(Z0.xy)), color->[1,1,1],size->15);';
-    this._keydownscript   = 'javascript("' + this._varName + '.keypress(\'"+"\\" + key()+"\'.charCodeAt(0))");';
-    this._mousedragscript = `javascript("
-      if (!(${this._varName}.z0AtMouse)) {
-        ${this._varName}.shift(arraymult(${this._varName}.mouseshift,1/${this._varName}.zoom));
-      }");
-      `;
-    this._mousedownscript = `javascript("${this._varName}.mouseshift === null");`; // fixes timing issue with click and drag feature
-    if ("move" in this._callbacks) {
-      this._movescript += GenCindyJSCode(this._callbacks.move);
-    }
-    if ("keydown" in this._callbacks) {
-      this._keydownscript += GenCindyJSCode(this._callbacks.keydown);
-    }
-    if ("mousedrag" in this._callbacks) {
-      this._mousedragscript += GenCindyJSCode(this._callbacks.mousedrag);
-    }
-    if ("mousedown" in this._callbacks) {
-      this._mousedownscript += GenCindyJSCode(this._callbacks.mousedown);
-    }
-    if ("mousemove" in this._callbacks) {
-      this._mousemovescript += GenCindyJSCode(this._callbacks.mousemove);
-    }
-    if ("mouseclick" in this._callbacks) {
-      this._mouseclickscript += GenCindyJSCode(this._callbacks.mouseclick);
-    }
     this._cindy = CindyJS({
-      canvasname: this._canvasName,
+      canvasname: canvasName,
       scripts: {
-        init:       iniscript(paramDict,this._res),
-        move:       this._movescript,
-        keydown:    this._keydownscript,
-        mousedrag:  this._mousedragscript,
-        mousedown:  this._mousedownscript,
-        mousemove:  this._mousemovescript,
-        mouseclick: this._mouseclickscript
+        init:      iniscript(preset, res),
+        move:      movescript,
+        keydown:   keydownscript,
+        mousedrag: mousedragscript,
+        mousedown: mousedownscript,
       },
-      //geometry: [{name: "Z0", kind: "P", type: "Free", pos: this.PlotToCanv(this._z0), size: 3 }],
+      geometry: [],
       ports: [{
-        id: this._canvasID,
-        width: this._canvasWidth,
-        height: this._canvasHeight,
-        transform: [{ visibleRect: [0,2,2,0] }],},]
+        id:        canvasID,
+        width:     canvasWidth,
+        height:    canvasHeight,
+        transform: [{ visibleRect: [0, 2, 2, 0] }],
+      }],
     });
   }
 
-  evokeCS(cscode) {
-    this._cindy.evokeCS(cscode);
-  }
+  evokeCS(code) { this._cindy.evokeCS(code); }
 
   ApplyPreset(preset) {
-    this.center = preset.center;
-    this.zoom = preset.zoom;
-    this.f = preset.f;
+    this.f      = preset.f;
+    this.center = preset.center.slice();
+    this.zoom   = preset.zoom;
   }
 
-  CanvToPlot(z) {
-    return [(z[0]-1)/this._zoom+this._center[0], (z[1]-1)/this._zoom+this._center[1]];
-  }
+  zoomIn(ratio) { this.zoom = this._zoom * ratio; }
 
-  PlotToCanv(z) {
-    return [(z[0]-this._center[0])*this._zoom+1, (z[1]-this._center[1])*this._zoom+1];
-  }
-
-  zoomIn(ratio) {
-    this.zoom = this.zoom*ratio;
-  }
-
-  shift(vec) {
-    this.center = addarrays(this._center,vec);
-  }
-
+  shift(vec) { this.center = addarrays(this._center, vec); }
 
   keypress(key) {
-    switch(key) {
-      case 187:  this.zoomIn(2); break;
-      case 189:  this.zoomIn(1/2); break;
-      case 38:   this.shift([0,1/(this._zoom*4)]); break;
-      case 40:   this.shift([0,-1/(this._zoom*4)]); break;
-      case 39:   this.shift([1/(this._zoom*4),0]); break;
-      case 37:   this.shift([-1/(this._zoom*4),0]); break;
+    switch (key) {
+      case 187: this.zoomIn(2);                        break; // +
+      case 189: this.zoomIn(0.5);                      break; // -
+      case 38:  this.shift([0,  1/(this._zoom * 4)]);  break; // up
+      case 40:  this.shift([0, -1/(this._zoom * 4)]);  break; // down
+      case 39:  this.shift([ 1/(this._zoom * 4), 0]);  break; // right
+      case 37:  this.shift([-1/(this._zoom * 4), 0]);  break; // left
     }
   }
 
-  exportImage(imageName) { // Export image as PNG
-    this.cindy.exportPNG(imageName);
-  }
-    
-
-  set isPtSelected(isSelected) {
-    this._isPtSelected = isSelected;
-  }
-
-
-  set f(fval) {
-    this._f = fval;
-    this.evokeCS(`f(z,c) := (${this._f});`);
-  }
-
-  set zoom(zoomval) {
-    this._zoom = zoomval;
-    this.evokeCS(`zoom=${zoomval};`);
-  }
-
-  set center(centerval) {
-    this._center = centerval;
-    var str = `center_1=${this._center[0]};
-               center_2=${this._center[1]};`;
-    this.evokeCS(str);
-  }
-
-  set res(resVal) {
-    this._res = resVal;
-    this.evokeCS(`createimage("julia", ${this._res}, ${this._res})`);
-  }
+  exportImage(imageName) { this._cindy.exportPNG(imageName); }
 
   get mousepos() {
     this.evokeCS(`javascript("${this._varName}._mousepos = "+mouse());`);
@@ -223,189 +141,62 @@ class RiemannPlot {
   }
 
   get mouseshift() {
-    this._mouseshift = subtractarrays(this._mousepos,this.mousepos);
+    this._mouseshift = subtractarrays(this._mousepos, this.mousepos);
     return this._mouseshift;
   }
 
-  get zoom() {
-    return this._zoom;
+  set f(fval) {
+    this._f = fval;
+    this.evokeCS(`f(z) := (${fval});`);
   }
 
-  get center() {
-    return this._center;
+  set zoom(zval) {
+    this._zoom = zval;
+    this.evokeCS(`zoom = ${zval};`);
   }
 
-  get f() {
-    return this._f;
+  set center(cval) {
+    this._center = cval;
+    this.evokeCS(`center_1 = ${cval[0]}; center_2 = ${cval[1]};`);
   }
 
-  get cindy() {
-    return this._cindy;
+  set res(rval) {
+    this._res = parseInt(rval);
+    this.evokeCS(`createimage("domain", ${this._res}, ${this._res});`);
   }
 
-  get range() {
-    return [this._center[0]-1/this._zoom,this._center[0]+1/this._zoom,
-            this._center[1]-1/this._zoom,this._center[1]+1/this._zoom];
-  }
-
-  get res() {
-    return this._res;
-  }
-
+  get zoom()   { return this._zoom;   }
+  get center() { return this._center; }
+  get f()      { return this._f;      }
+  get res()    { return this._res;    }
 }
 
 
-/////////////////////
+// ── UI helpers ───────────────────────────────────────────────────────────────
 
-// Generate string that calls the lines of JS code
-// takes in an array of strings where each is a line
-// of JS code (w/o semicolons)
-var GenCindyJSCode = function(arr) {
-  return  'javascript("' + arr.join("; ") +';");';
-}
+var getFInput      = () => document.getElementById("inpf").value;
+var getCenterInput = () => document.getElementById("inpcenter").value.split(",").map(parseFloat);
+var getZoomInput   = () => parseFloat(document.getElementById("inpzoom").value);
+var getResInput    = () => parseInt(document.getElementById("inpres").value);
 
+var setFInput = (v) => { document.getElementById("inpf").value = v; };
+var setCenterInput = (v) => {
+  document.getElementById("inpcenter").value =
+    v.map(x => parseFloat(x.toPrecision(6))).join(",");
+};
+var setZoomInput = (v) => { document.getElementById("inpzoom").value = v; };
 
-
-
-////////////////////
-
-var complex = function(zArr) {
-  if (zArr[1] >= 0) {
-    return zArr[0] + '+i*' + zArr[1];
-  } else {
-    return zArr[0] + '-i*' + (-zArr[1]);
-  }
-}
-
-var re = function(z) {
-  out = z.split(/\-|\+/);
-  if (z[0] == '-') {
-    out = (-1)*parseFloat(out[1]);
-  } else {
-    out = parseFloat(out[0]);
-  }
-  return out;
-}
-
-var im = function(z) {
-  if (z.includes('-i*') || z.includes('+i*')) {
-    imag = z.split(/\-i\*|\+i\*/)[1];
-    out = parseFloat(z[z.length-imag.length-3]+'1')*parseFloat(imag);
-  } else {
-    imag = z.split(/\-|\+/).at(-1);
-    out = parseFloat(z[z.length-imag.length-1]+'1')*parseFloat(imag.slice(0,imag.length-1));
-  }
-  return out;
-}
-
-var reim = function(z) {
-  return [re(z),im(z)];
-}
-
-
-
-
-
-
-
-
-
-
-
-
-// Javascript-HTML interfacing functions.
-var getFInput = function() {
-  return document.getElementById("inpf").value;
-}
-
-var getCenterInput = function() {
-  return document.getElementById("inpcenter").value.split(",").map(parseFloat);
-}
-
-var getZoomInput = function() {
-  return parseFloat(document.getElementById("inpzoom").value);
-}
-
-//////////
-/*
-var setNInput = function(nval) {
-  document.getElementById("inpmn").value = nval;
-  document.getElementById("inpjn").value = nval;
-}
-
-var setFInput = function(fval) {
-  document.getElementById("inpf").value = fval;
-}
-
-var setDEscInput = function(escval) {
-  document.getElementById("inpje").value = escval;
-}
-
-var setPEscInput = function(escval) {
-  document.getElementById("inpme").value = escval;
-}
-
-var setPCenterInput = function(centerval) {
-  centerval = centerval.map(vals => vals.toPrecision(6)).map(parseFloat);
-  document.getElementById("inpparamcenter").value = centerval;
-}
-
-var setPZoomInput = function(zoomval) {
-  document.getElementById("inpparamzoom").value = zoomval;
-}
-
-var setDCenterInput = function(centerval) {
-  centerval = centerval.map(vals => vals.toPrecision(6)).map(parseFloat);
-  document.getElementById("inpdyncenter").value = centerval;
-}
-
-var setDZoomInput = function(zoomval) {
-  document.getElementById("inpdynzoom").value = zoomval;
-}
-
-
-var getPresetDicts = function() { 
-  return [{f:getFInput(), c:getCInput(),                      n:getPNInput(), nplot:getPNPlotInput(), escape:getPEscInput(), zoom: getPZoomInput(), center: getPCenterInput()},
-          {f:getFInput(), c:julia_fract.c, z0:julia_fract.z0, n:getDNInput(), nplot:getDNPlotInput(), escape:getDEscInput(), zoom: getDZoomInput(), center: getDCenterInput()}];
-}
-
-var setInputs = function(preset_val) {
-  setPCenterInput(param_preset_dict[preset_val].center);
-  setPZoomInput(param_preset_dict[preset_val].zoom);
-  setDCenterInput(dyn_preset_dict[preset_val].center);
-  setDZoomInput(dyn_preset_dict[preset_val].zoom);
-  setCInput(param_preset_dict[preset_val].c);
-  setNInput(param_preset_dict[preset_val].n);
-  setFInput(param_preset_dict[preset_val].f);
-  setPEscInput(param_preset_dict[preset_val].escape);
-  setDEscInput(dyn_preset_dict[preset_val].escape);
-}
-
-var apply_preset = function(preset_val) {
-  setInputs(preset_val);
-  julia_fract.ApplyPreset(    dyn_preset_dict[preset_val]);
-  parameter_fract.ApplyPreset(param_preset_dict[preset_val]);
-}
+var apply_preset = function(presetKey) {
+  var p = presets[presetKey];
+  setFInput(p.f);
+  setCenterInput(p.center);
+  setZoomInput(p.zoom);
+  plot.ApplyPreset(p);
+};
 
 var apply_changes = function() {
-  julia_fract.ApplyPreset(    getPresetDicts()[1]);
-  parameter_fract.ApplyPreset(getPresetDicts()[0]);
-  parameter_fract.res = document.getElementById('inpdres').value;
-  julia_fract.res = document.getElementById('inpjres').value;
-}
-*/
-
-
-
-// Utility Javascript functions
-
-// Save canvas to image file
-// Possible filetypes include: png,jpeg,svg,pdf
-var saveCanvasAs = function(canvas,filename,filetype) { 
-  var downloadLink = document.createElement('a');
-  downloadLink.download = filename + "." + filetype;
-  downloadLink.href = canvas.toDataURL("image/" + filetype);
-  downloadLink.click();
-  downloadLink.remove();
-  return true;
-}
+  plot.f      = getFInput();
+  plot.center = getCenterInput();
+  plot.zoom   = getZoomInput();
+  plot.res    = getResInput();
+};
