@@ -11,11 +11,214 @@
         <script type="text/javascript" src="../../assets/js/CindyGL.js"></script>
         <link rel="stylesheet" href="../../assets/css/CindyJS.css" />
         <link rel="icon" href="../../images/favicon.ico">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+        <style>
+            *, *::before, *::after { box-sizing: border-box; }
+
+            body {
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                background: #f0f2f5;
+                color: #1a1a1a;
+                margin: 0;
+                padding: 1.8rem 2rem 3rem;
+            }
+
+            .page { max-width: 860px; }
+
+            h1 {
+                font-size: 1.5rem;
+                font-weight: 600;
+                letter-spacing: -0.02em;
+                margin: 0 0 1.1rem;
+                color: #111;
+            }
+
+            /* ── Canvas area ──────────────────────────────── */
+            .canvas-wrap {
+                position: relative;
+                display: inline-block;
+                border-radius: 10px;
+                overflow: hidden;
+                box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+                line-height: 0;
+                border: 1px solid #ccc;
+            }
+
+            .fn-overlay {
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                background: rgba(255,255,255,0.93);
+                padding: 5px 12px;
+                border-radius: 7px;
+                font-size: 15px;
+                backdrop-filter: blur(6px);
+                box-shadow: 0 1px 8px rgba(0,0,0,0.13);
+                z-index: 10;
+            }
+
+            .fn-overlay span { color: #555; user-select: none; }
+
+            .fn-overlay input {
+                font-family: 'Inter', monospace;
+                font-size: 15px;
+                border: none;
+                background: transparent;
+                outline: none;
+                width: 230px;
+                color: #1a1a1a;
+            }
+
+            /* ── Toolbar ──────────────────────────────────── */
+            .toolbar {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: flex-end;
+                gap: 1.2rem;
+                margin-top: 0.8rem;
+                padding: 0.75rem 1rem;
+                background: #fff;
+                border-radius: 10px;
+                border: 1px solid #e0e0e0;
+                max-width: 804px;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+            }
+
+            .ctrl-group {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+            }
+
+            .ctrl-label {
+                font-size: 10.5px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.07em;
+                color: #999;
+            }
+
+            .ctrl-row {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .toolbar-divider {
+                width: 1px;
+                background: #e8e8e8;
+                align-self: stretch;
+                margin: 2px 0;
+            }
+
+            /* ── Form elements ────────────────────────────── */
+            input[type="text"] {
+                font-family: 'Inter', monospace;
+                font-size: 13.5px;
+                padding: 5px 8px;
+                border: 1px solid #d4d4d4;
+                border-radius: 6px;
+                background: #fafafa;
+                color: #1a1a1a;
+                transition: border-color 0.15s, background 0.15s;
+            }
+
+            input[type="text"]:focus {
+                outline: none;
+                border-color: #6a9fd8;
+                background: #fff;
+            }
+
+            select {
+                font-family: 'Inter', sans-serif;
+                font-size: 13.5px;
+                padding: 5px 8px;
+                border: 1px solid #d4d4d4;
+                border-radius: 6px;
+                background: #fafafa;
+                color: #1a1a1a;
+                cursor: pointer;
+            }
+
+            button {
+                font-family: 'Inter', sans-serif;
+                font-size: 13px;
+                font-weight: 500;
+                padding: 5px 13px;
+                border: 1px solid #d4d4d4;
+                border-radius: 6px;
+                background: #f4f4f4;
+                color: #333;
+                cursor: pointer;
+                transition: background 0.12s, border-color 0.12s;
+                white-space: nowrap;
+            }
+
+            button:hover {
+                background: #e8e8e8;
+                border-color: #b8b8b8;
+            }
+
+            .param-label {
+                font-size: 13px;
+                color: #555;
+            }
+
+            /* ── Info section ─────────────────────────────── */
+            .info-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 1.8rem;
+                max-width: 804px;
+                margin-top: 1.6rem;
+            }
+
+            .info-block h4 {
+                font-size: 10.5px;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                color: #999;
+                margin: 0 0 0.55rem;
+            }
+
+            .info-block ul {
+                font-size: 13px;
+                line-height: 1.65;
+                margin: 0;
+                padding-left: 1.2em;
+                color: #3a3a3a;
+            }
+
+            .info-block li { margin-bottom: 0.3em; }
+
+            .info-block + .info-block h4 { margin-top: 1em; }
+
+            /* ── Footer ───────────────────────────────────── */
+            .contact {
+                font-size: 13px;
+                color: #888;
+                margin-top: 1.4rem;
+                max-width: 804px;
+            }
+
+            footer {
+                margin-top: 0.6rem;
+                font-size: 11.5px;
+                color: #bbb;
+            }
+        </style>
     </head>
 
-    <body style="font-family: Arial">
-        <h1 style="margin-bottom: 0em;">Conformal Map Visualizer</h1>
+    <body>
+    <div class="page">
 
+        <h1>Conformal Map Visualizer</h1>
+
+        <!-- ── CindyScript ──────────────────────────────────────────────── -->
         <script id='init' type='text/cindyscript'>
             // Real parameters (updated from HTML inputs)
             a = 1;
@@ -27,7 +230,7 @@
 
             exteriorMap = false;
 
-            // HSV to RGB conversion
+            // HSV → RGB
             hsvToRGB(h, s, v) := (
                 regional(j, fr, p, q, t);
                 h = (h - floor(h)) * 6;
@@ -44,22 +247,25 @@
                 [1, p, q]))))) * v
             );
 
-            // Domain color: encodes arg(z) as hue, |z| as brightness modulation
+            // Line color: full domain coloring of the derivative
             color(z) := (
-                regional(n, zfract, grey1, grey2);
+                regional(n, logz, zfract, grey1, grey2);
                 n = 12;
-                z = log(z) / (2 * pi);
-                zfract = n * z - floor(n * z);
+                logz = log(z) / (2 * pi);
+                zfract = n * logz - floor(n * logz);
                 grey1 = im(zfract);
                 grey2 = re(zfract);
-                hsvToRGB(im(z), 1., .5 + .5 * re(sqrt(grey1 * grey2)))
+                hsvToRGB(im(logz), 1., .5 + .5 * re(sqrt(grey1 * grey2)))
             );
+
+            // Fill color: same hue as color(), lighter saturation for cell fills
+            fillcolor(z) := hsvToRGB(im(log(z) / (2 * pi)), 0.45, 0.92);
         </script>
 
         <script id='firstDrawing' type='text/cindyscript'>
-            // Draw coordinate axes
-            draw(line((0,1,0)), color->(0,0,0), size->0.5);
-            draw(line((1,0,0)), color->(0,0,0), size->0.5);
+            // Coordinate axes
+            draw(line((0,1,0)), color->(0,0,0), size->0.4);
+            draw(line((1,0,0)), color->(0,0,0), size->0.4);
 
             // Read interactive parameter points
             c = complex(PC);
@@ -70,54 +276,71 @@
             if(x < U1.x, x = U1.x);
             if(x > U2.x, x = U2.x);
             U.xy = (x, U1.y);
-            gr = |U, U1| / |U1, U2| * 38 + 3;  // maps slider to range [3, 41]
+            gr = |U, U1| / |U1, U2| * 38 + 3;  // slider → [3, 41]
 
             thetaRes = round(gr);
             rRes     = round(gr);
             eps      = 0.0001;
-            z        = 0 + i*0;  // center of the preimage disk
+            z        = 0 + i*0;   // center of the preimage disk
 
             thetas = pi * (-thetaRes..(thetaRes+1)) / thetaRes;
             rs     = (1..rRes) / rRes;
 
             if(exteriorMap,
-                // Draw image of the exterior of the unit disk
                 rs = apply(rs, exp(2.5 * #));
                 apply(thetas, theta,
                     apply(rs, r,
-                        rp = r * exp(2.5 / rRes);
-                        dfval = (f(z + r*exp(i*theta) + eps) - f(z + r*exp(i*theta) - eps)) / (2*eps);
-                        connect([gauss(f(z + r*exp(i*theta))),  gauss(f(z + rp*exp(i*theta)))],              size->2, color->color(dfval));
-                        connect([gauss(f(z + r*exp(i*theta))),  gauss(f(z + r*exp(i*(theta + pi/thetaRes))))], size->2, color->color(dfval));
+                        rp   = r * exp(2.5 / rRes);
+                        dth  = pi / thetaRes;
+                        midz = z + r * exp(i * theta);
+                        dfval = (f(midz + eps) - f(midz - eps)) / (2 * eps);
+
+                        p00 = gauss(f(z + r  * exp(i * theta)));
+                        p10 = gauss(f(z + rp * exp(i * theta)));
+                        p11 = gauss(f(z + rp * exp(i * (theta + dth))));
+                        p01 = gauss(f(z + r  * exp(i * (theta + dth))));
+
+                        fillpoly([p00, p10, p11, p01], color->fillcolor(dfval));
+                        connect([p00, p10], size->1.5, color->color(dfval));
+                        connect([p00, p01], size->1.5, color->color(dfval));
                     );
                 ),
-                // Draw image of the unit disk
                 apply(thetas, theta,
                     apply(rs, r,
-                        rm = r - 1/rRes;
-                        dfval = (f(z + r*exp(i*theta) + eps) - f(z + r*exp(i*theta) - eps)) / (2*eps);
-                        connect([gauss(f(z + rm*exp(i*theta))), gauss(f(z + r*exp(i*theta)))],               size->2, color->color(dfval));
-                        connect([gauss(f(z + r*exp(i*theta))),  gauss(f(z + r*exp(i*(theta + pi/thetaRes))))], size->2, color->color(dfval));
+                        rm   = r - 1 / rRes;
+                        dth  = pi / thetaRes;
+                        midz = z + r * exp(i * theta);
+                        dfval = (f(midz + eps) - f(midz - eps)) / (2 * eps);
+
+                        p00 = gauss(f(z + rm * exp(i * theta)));
+                        p10 = gauss(f(z + r  * exp(i * theta)));
+                        p11 = gauss(f(z + r  * exp(i * (theta + dth))));
+                        p01 = gauss(f(z + rm * exp(i * (theta + dth))));
+
+                        fillpoly([p00, p10, p11, p01], color->fillcolor(dfval));
+                        connect([p00, p10], size->1.5, color->color(dfval));
+                        connect([p10, p11], size->1.5, color->color(dfval));
                     );
                 )
             );
 
             // Labels
-            drawtext(PC + (.1, .1), "c=" + format(c, 3), color->(0.8, 0, 0),   size->14);
-            drawtext(PD + (.1, .1), "d=" + format(d, 3), color->(0,   0, 0.8), size->14);
-            drawtext(U1 + (.1, .1), "grid", size->12);
+            drawtext(PC + (.1, .1), "c=" + format(c, 3), color->(0.8, 0, 0),   size->13);
+            drawtext(PD + (.1, .1), "d=" + format(d, 3), color->(0,   0, 0.8), size->13);
+            drawtext(U1 + (.1, .1), "grid", size->11);
         </script>
 
-        <div style="position:relative; display:inline-block;">
-            <canvas id="CSCanvas" width="800" height="500"
-                style="border:2px solid #000000;"></canvas>
-            <div style="font-size:16px; position:absolute; top:10px; left:10px;
-                        background:rgba(255,255,255,0.88); padding:4px 10px; border-radius:4px;">
-                f(z) =&nbsp;<input id="inpf" type="text" value="1+z+z^2/2"
-                    onkeypress="typ(event, this)" size="28" style="font-size:16px;">
+        <!-- ── Canvas ──────────────────────────────────────────────────── -->
+        <div class="canvas-wrap">
+            <canvas id="CSCanvas" width="800" height="500"></canvas>
+            <div class="fn-overlay">
+                <span>f (z) =</span>
+                <input id="inpf" type="text" value="1+z+z^2/2"
+                    onkeypress="typ(event, this)" autocomplete="off" spellcheck="false">
             </div>
         </div>
 
+        <!-- ── JS ─────────────────────────────────────────────────────── -->
         <script type="text/javascript">
             var gslp = [
                 {name:"PC", type:"Free", pos:[-1,  0.4], color:[1,   0,   0  ], pinned:false, size:4},
@@ -139,7 +362,7 @@
             });
             setTimeout(function() { document.onkeydown = {}; }, 1000);
 
-            // Apply f(z) on Enter key in the input field
+            // Apply f(z) on Enter
             var typ = function(a, b) {
                 var chCode = ('charCode' in event) ? event.charCode : event.keyCode;
                 if (chCode == 13) {
@@ -147,7 +370,7 @@
                 }
             };
 
-            // Load a preset: set f, and optionally default a and b
+            // Load a preset expression (and optionally reset a, b)
             var define = function(expr, aval, bval) {
                 document.getElementById("inpf").value = expr;
                 if (aval !== undefined) document.getElementById("inpa").value = aval;
@@ -157,14 +380,36 @@
                 cdy.evokeCS('a=' + av + '; b=' + bv + '; setfunction("' + expr + '");');
             };
 
-            // Push a, b values from HTML inputs into Cindy
+            // Default a/b values per preset
+            var presetDefaults = {
+                "1+z+z^2/2":     { a:1, b:1 },
+                "c*z":           { a:1, b:1 },
+                "c*z+d":         { a:1, b:1 },
+                "z^2+c":         { a:1, b:1 },
+                "1/z":           { a:1, b:1 },
+                "exp(a*z)":      { a:1, b:1 },
+                "sin(a*z)":      { a:1, b:1 },
+                "z^a":           { a:2, b:1 },
+                "z+1/z":         { a:1, b:1 },
+                "sqrt(z)":       { a:1, b:1 },
+                "arctan(z)":     { a:1, b:1 },
+                "(z-c)/(c*z-1)": { a:1, b:1 },
+            };
+
+            var applyPreset = function() {
+                var expr = document.getElementById("preset-sel").value;
+                var defs = presetDefaults[expr] || { a:1, b:1 };
+                define(expr, defs.a, defs.b);
+            };
+
+            // Push a, b from inputs into Cindy
             var apply_ab = function() {
                 var a = parseFloat(document.getElementById("inpa").value);
                 var b = parseFloat(document.getElementById("inpb").value);
                 cdy.evokeCS('a=' + a + '; b=' + b + ';');
             };
 
-            // Toggle interior / exterior map
+            // Toggle interior / exterior
             var toggle_exterior = function() {
                 cdy.evokeCS('exteriorMap = !exteriorMap;');
                 var btn = document.getElementById("btnExt");
@@ -172,69 +417,84 @@
             };
         </script>
 
-        <br>
-        <table style="margin-top: 0.5em;">
-            <tr style="vertical-align:top;">
-                <td style="padding-right: 2em;">
-                    <b>Parameters</b><br>
-                    a =&nbsp;<input id="inpa" type="text" value="1" size="4" style="font-size:15px">
-                    &nbsp;b =&nbsp;<input id="inpb" type="text" value="1" size="4" style="font-size:15px">
-                    &nbsp;<button onclick="apply_ab()" style="font-size:15px">Apply</button>
-                </td>
-                <td style="padding-right: 2em;">
-                    <b>View</b><br>
-                    <button id="btnExt" onclick="toggle_exterior()" style="font-size:15px">Interior</button>
-                </td>
-                <td>
-                    <b>Presets</b><br>
-                    <button style="width:110px;" onclick='define("c*z");'>c·z</button>
-                    <button style="width:110px;" onclick='define("c*z+d");'>c·z + d</button>
-                    <button style="width:110px;" onclick='define("z^2+c");'>z² + c</button>
-                    <button style="width:110px;" onclick='define("1/z");'>1/z</button><br>
-                    <button style="width:110px;" onclick='define("exp(a*z)");'>exp(a·z)</button>
-                    <button style="width:110px;" onclick='define("sin(a*z)");'>sin(a·z)</button>
-                    <button style="width:110px;" onclick='define("z^a",2);'>z^a</button>
-                    <button style="width:110px;" onclick='define("z+1/z");'>z + 1/z</button><br>
-                    <button style="width:110px;" onclick='define("sqrt(z)");'>sqrt(z)</button>
-                    <button style="width:110px;" onclick='define("arctan(z)");'>arctan(z)</button>
-                    <button style="width:110px;" onclick='define("(z-c)/(c*z-1)");'>Möbius</button>
-                    <button style="width:110px;" onclick='define("1+z+z^2/2");'>1+z+z²/2</button>
-                </td>
-            </tr>
-        </table>
+        <!-- ── Toolbar ─────────────────────────────────────────────────── -->
+        <div class="toolbar">
 
-        <table style="width:900px; margin-top: 1em;">
-            <tr>
-                <td style="vertical-align:top; width:50%;">
-                    <h4 style="margin-bottom:-.7em;">About</h4>
-                    <ul style="text-align:left;">
-                        <li style="padding-bottom:0.2em;">This tool draws the image of the unit disk (or its exterior) under a complex map f. A polar grid of circles and radial rays is drawn in the domain and transported through f into the range.</li>
-                        <li style="padding-bottom:0.2em;">Grid lines are colored by the argument of f′(z), making it easy to see how f rotates and stretches infinitesimal shapes. Where f′(z) = 0 (critical points), colors become singular.</li>
-                        <li>The red point c and blue point d are complex parameters that can be dragged on the canvas to update the map in real time.</li>
-                    </ul>
-                </td>
-                <td style="vertical-align:top; width:50%;">
-                    <h4 style="margin-bottom:-.7em;">Controls</h4>
-                    <ul style="text-align:left;">
-                        <li style="padding-bottom:0.2em;">Type a function in the f(z) field and press <b>Enter</b> to apply.</li>
-                        <li style="padding-bottom:0.2em;">Drag the red (<b>c</b>) or blue (<b>d</b>) point to update complex parameters live.</li>
-                        <li style="padding-bottom:0.2em;">Set <b>a</b> and <b>b</b> (real-valued parameters) and press <b>Apply</b>.</li>
-                        <li>Drag the yellow <b>grid</b> slider to change the grid density.</li>
-                    </ul>
-                    <h4 style="margin-bottom:-.7em;">Predefined objects</h4>
-                    <ul style="text-align:left;">
-                        <li><b>Constants:</b> e, pi, i.</li>
-                        <li><b>Parameters:</b> a, b (real); c, d (complex, draggable).</li>
-                        <li>abs, sqrt, exp, log, sin, cos, tan, arcsin, arccos, arctan, re, im, conjugate.</li>
-                    </ul>
-                </td>
-            </tr>
-        </table>
+            <div class="ctrl-group">
+                <span class="ctrl-label">Parameters</span>
+                <div class="ctrl-row">
+                    <span class="param-label">a =</span>
+                    <input id="inpa" type="text" value="1" style="width:48px"
+                        onkeypress="if(event.key==='Enter'){apply_ab();}">
+                    <span class="param-label">b =</span>
+                    <input id="inpb" type="text" value="1" style="width:48px"
+                        onkeypress="if(event.key==='Enter'){apply_ab();}">
+                    <button onclick="apply_ab()">Apply</button>
+                </div>
+            </div>
 
-        <h4 style="margin-top:-.4em;">Contact me at andrew@graven.com with any comments, suggestions, or feature requests.</h4>
-        <br><br><br>
-        <footer>
-            <p>Created by Andrew Graven. Last updated 4/13/26</p>
-        </footer>
+            <div class="toolbar-divider"></div>
+
+            <div class="ctrl-group">
+                <span class="ctrl-label">Preset</span>
+                <div class="ctrl-row">
+                    <select id="preset-sel">
+                        <option value="1+z+z^2/2">1 + z + z²/2</option>
+                        <option value="c*z">c · z</option>
+                        <option value="c*z+d">c · z + d</option>
+                        <option value="z^2+c">z² + c</option>
+                        <option value="1/z">1 / z</option>
+                        <option value="z+1/z">z + 1/z &nbsp;(Joukowski)</option>
+                        <option value="exp(a*z)">exp(a · z)</option>
+                        <option value="sin(a*z)">sin(a · z)</option>
+                        <option value="z^a">z ^ a</option>
+                        <option value="sqrt(z)">sqrt(z)</option>
+                        <option value="arctan(z)">arctan(z)</option>
+                        <option value="(z-c)/(c*z-1)">Möbius: (z − c) / (c̄z − 1)</option>
+                    </select>
+                    <button onclick="applyPreset()">Apply</button>
+                </div>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="ctrl-group">
+                <span class="ctrl-label">View</span>
+                <button id="btnExt" onclick="toggle_exterior()">Interior</button>
+            </div>
+
+        </div>
+
+        <!-- ── Info ────────────────────────────────────────────────────── -->
+        <div class="info-grid">
+            <div class="info-block">
+                <h4>About</h4>
+                <ul>
+                    <li>Draws the image of the unit disk (or exterior) under a complex map f. A polar grid of circles and radial rays is transported through f into the range.</li>
+                    <li>Cell fills and grid lines are both colored by the argument of f′(z), making it easy to see how f rotates and stretches infinitesimal shapes. Where f′(z) = 0 (critical points), colors become singular.</li>
+                    <li>The red point <b>c</b> and blue point <b>d</b> are complex parameters that can be dragged to update the map in real time.</li>
+                </ul>
+            </div>
+            <div class="info-block">
+                <h4>Controls</h4>
+                <ul>
+                    <li>Type a function in the f(z) field and press <b>Enter</b>.</li>
+                    <li>Drag <b>c</b> (red) or <b>d</b> (blue) to update complex parameters live.</li>
+                    <li>Set <b>a</b>, <b>b</b> (real parameters) and press <b>Apply</b>.</li>
+                    <li>Drag the yellow <b>grid</b> slider to change grid density.</li>
+                </ul>
+                <h4 style="margin-top:1em;">Predefined objects</h4>
+                <ul>
+                    <li><b>Constants:</b> e, pi, i.</li>
+                    <li><b>Parameters:</b> a, b (real); c, d (complex, draggable).</li>
+                    <li>abs, sqrt, exp, log, sin, cos, tan, arcsin, arccos, arctan, re, im, conjugate.</li>
+                </ul>
+            </div>
+        </div>
+
+        <p class="contact">Contact me at <a href="mailto:andrew@graven.com">andrew@graven.com</a> with any comments, suggestions, or feature requests.</p>
+        <footer>Created by Andrew Graven. Last updated 4/13/26</footer>
+
+    </div><!-- .page -->
     </body>
 </html>
