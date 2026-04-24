@@ -1,12 +1,10 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
 // Utility functions shared across Riemann visualization tools.
 // The main conformal map logic lives inline in riemann_plot.html.
 
 function addarrays(a, b)      { return a.map((e, i) => e + b[i]); }
 function subtractarrays(a, b) { return a.map((e, i) => e - b[i]); }
 function arraymult(arr, m)    { return arr.map(e => e * m); }
-=======
+
 // Preset dictionary: each entry has f (CindyScript expression), center, zoom
 var presets = {
   "z^2":         { f: "z^2",          center: [0, 0], zoom: 0.5  },
@@ -23,15 +21,6 @@ var presets = {
   "(z-1)/(z+1)": { f: "(z-1)/(z+1)", center: [0, 0], zoom: 0.5  },
 };
 
-=======
-// Utility functions shared across Riemann visualization tools.
-// The main conformal map logic lives inline in riemann_plot.html.
->>>>>>> ad6b2f5 (Separate conformal map and domain coloring into distinct tools.)
-
-function addarrays(a, b)      { return a.map((e, i) => e + b[i]); }
-function subtractarrays(a, b) { return a.map((e, i) => e - b[i]); }
-function arraymult(arr, m)    { return arr.map(e => e * m); }
-<<<<<<< HEAD
 
 
 var iniscript = function(preset, res) {
@@ -214,6 +203,3 @@ var apply_changes = function() {
   plot.zoom   = getZoomInput();
   plot.res    = getResInput();
 };
->>>>>>> cc34fe4 (Added project gallery and domain coloring tool.)
-=======
->>>>>>> ad6b2f5 (Separate conformal map and domain coloring into distinct tools.)
