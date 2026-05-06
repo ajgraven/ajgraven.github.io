@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arnold Tongues Visualizer</title>
+<style>
+/*
+ * =========================================================================
+ *  STYLES — Dark scientific-instrument theme
+ * =========================================================================
+ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --bg-deep:    #0b0e17;
+    --bg-panel:   #121728;
+    --bg-input:   #0a0d18;
+    --border:     #1e2845;
+    --accent:     #4e7cff;
+    --accent-dim: #2b4a99;
+    --text:       #c8cce0;
+    --text-dim:   #6b7394;
+    --text-bright:#eef0ff;
+    --danger:     #ff5c5c;
+    --font-mono:  'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', monospace;
+    --font-ui:    'DM Sans', 'Segoe UI', system-ui, sans-serif;
+}
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+body {
+    background: var(--bg-deep);
+    color: var(--text);
+    font-family: var(--font-ui);
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ---------- Top control bar ---------- */
+#controls {
+    background: var(--bg-panel);
+    padding: 10px 18px;
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+    min-height: 48px;
+}
+
+#controls .group {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+#controls .sep {
+    width: 1px;
+    height: 24px;
+    background: var(--border);
+}
+
+#controls label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    user-select: none;
+}
+
+button {
+    background: var(--bg-input);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 5px 13px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--font-ui);
+    font-weight: 500;
+    transition: background 0.15s, border-color 0.15s;
+}
+button:hover { background: var(--accent-dim); border-color: var(--accent); }
+button.active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--text-bright);
+}
+
+input[type="number"] {
+    background: var(--bg-input);
+    color: var(--text-bright);
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+    border-radius: 5px;
+    width: 72px;
+    font-size: 13px;
+    font-family: var(--font-mono);
+    text-align: center;
+}
+input[type="number"]:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+#view-info {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+/* ---------- Canvas container ---------- */
+#canvas-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    cursor: crosshair;
+}
+
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* ---------- Axis labels ---------- */
+.axis-label {
+    position: absolute;
+    font-size: 15px;
+    font-family: var(--font-mono);
+    font-style: italic;
+    color: var(--text-dim);
+    pointer-events: none;
+    user-select: none;
+    opacity: 0.7;
+}
+#axis-x { bottom: 10px; left: 50%; transform: translateX(-50%); }
+#axis-y { left: 12px;   top: 50%; transform: translateY(-50%) rotate(-90deg); }
+
+/* ---------- Tooltip ---------- */
+#tooltip {
+    position: absolute;
+    background: rgba(11, 14, 23, 0.93);
+    color: var(--text-bright);
+    padding: 8px 13px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    pointer-events: none;
+    border: 1px solid var(--accent-dim);
+    display: none;
+    z-index: 100;
+    line-height: 1.65;
+    white-space: nowrap;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+#tooltip .frac {
+    color: var(--accent);
+    font-weight: 500;
+    font-size: 14px;
+}
+
+/* ---------- Loading overlay ---------- */
+#loading {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-deep);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    font-size: 14px;
+    color: var(--text-dim);
+    transition: opacity 0.4s;
+}
+#loading.hidden { opacity: 0; pointer-events: none; }
+
+/* ---------- Header ---------- */
+#header {
+    background: var(--bg-panel);
+    padding: 14px 20px 10px;
+    border-bottom: 1px solid var(--border);
+}
+#header h1 {
+    font-family: var(--font-ui);
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-bright);
+    letter-spacing: -0.01em;
+    margin-bottom: 4px;
+}
+#header p {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-dim);
+    max-width: 960px;
+}
+#header .math {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+}
+
+/* ---------- Footer / instructions ---------- */
+#footer {
+    background: var(--bg-panel);
+    padding: 8px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 28px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+#footer .instruction {
+    font-size: 11.5px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+#footer .key {
+    display: inline-block;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text);
+}
+</style>
+</head>
+<body>
+
+<!-- ===== Header ===== -->
+<div id="header">
+    <h1><a href="https://en.wikipedia.org/wiki/Arnold_tongue">Arnold Tongues</a></h1>
+    <p>
+        Mode-locking regions in the parameter plane of the standard circle map
+        <span class="math">θ<sub>n+1</sub> = θ<sub>n</sub> + Ω − (K/2π) sin(2πθ<sub>n</sub>)</span>.
+        Each tongue is a region where the winding number locks to a rational value <span class="math">p/q</span>.
+        At <span class="math">K = 0</span> the tongues are infinitely thin (only rational Ω);
+        they widen as coupling <span class="math">K</span> increases and begin to overlap past <span class="math">K = 1</span>,
+        where the map loses invertibility and chaotic dynamics emerge.
+    </p>
+</div>
+
+<!-- ===== Control Bar ===== -->
+<div id="controls">
+    <div class="group">
+        <label>Color</label>
+        <button id="btn-continuous" class="active" onclick="setColorMode(0)">Continuous</button>
+        <button id="btn-discrete" onclick="setColorMode(1)">Discrete</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+        <label>Iterations</label>
+        <input type="number" id="iter-input" value="200" min="10" max="4000" step="10">
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+        <button id="btn-reset" onclick="resetView()">Reset View</button>
+    </div>
+    <span id="view-info"></span>
+</div>
+
+<!-- ===== Canvas and overlays ===== -->
+<div id="canvas-container">
+    <canvas id="glcanvas"></canvas>
+    <div class="axis-label" id="axis-x">Ω</div>
+    <div class="axis-label" id="axis-y">K</div>
+    <div id="tooltip"></div>
+    <div id="loading">Compiling shaders…</div>
+</div>
+
+<!-- ===== Footer / Controls Instructions ===== -->
+<div id="footer">
+    <div class="instruction"><span class="key">Scroll</span> Zoom in / out (centered on cursor)</div>
+    <div class="instruction"><span class="key">Click + Drag</span> Pan the view</div>
+    <div class="instruction"><span class="key">Hover</span> Show winding number ω as p/q</div>
+    <div class="instruction"><span class="key">Reset View</span> Return to Ω, K ∈ [0, 1]</div>
+</div>
+
+<script>
+/*
+ * =========================================================================
+ *  Arnold Tongues Visualizer
+ * =========================================================================
+ *
+ *  Renders the parameter plane (Ω, K) of the standard Arnold circle map
+ *
+ *      θ_{n+1} = θ_n + Ω − (K / 2π) sin(2π θ_n)
+ *
+ *  using a WebGL 2.0 fragment shader that computes the winding number
+ *
+ *      ω = lim_{n→∞} θ_n / n     (starting from θ_0 = 0)
+ *
+ *  for every pixel in parallel on the GPU.
+ *
+ *  Two coloring modes are available:
+ *    • Continuous — hue mapped from the winding number (shows devil's
+ *      staircase structure; each tongue is a band of constant hue).
+ *    • Discrete  — color by the denominator q of the best rational
+ *      approximation p/q via continued fractions.  Mode-locked regions
+ *      (tongues) get a distinct color per q; quasiperiodic/chaotic
+ *      regions are rendered dark.
+ *
+ *  Interaction:
+ *    • Mouse wheel to zoom (centered on cursor)
+ *    • Click + drag to pan
+ *    • Hover for a tooltip showing Ω, K, and the winding number as p/q
+ *
+ * =========================================================================
+ */
+
+
+/* -----------------------------------------------------------------------
+ *  1.  GLSL SHADERS
+ * ----------------------------------------------------------------------- */
+
+/**
+ * Vertex shader — renders a full-screen quad.
+ * Two triangles covering clip space [-1, 1]².
+ */
+const VERT_SRC = `#version 300 es
+precision highp float;
+
+// Full-screen triangle strip: 4 vertices → 2 triangles
+const vec2 QUAD[4] = vec2[4](
+    vec2(-1, -1),
+    vec2( 1, -1),
+    vec2(-1,  1),
+    vec2( 1,  1)
+);
+
+void main() {
+    gl_Position = vec4(QUAD[gl_VertexID], 0.0, 1.0);
+}
+`;
+
+/**
+ * Fragment shader — the computational core.
+ *
+ * For each pixel, maps screen coordinates to (Ω, K), iterates the
+ * circle map, computes the winding number, and outputs a color.
+ */
+const FRAG_SRC = `#version 300 es
+precision highp float;
+
+/* --- Uniforms --------------------------------------------------------- */
+uniform vec2  u_resolution;       // canvas size in pixels
+uniform float u_xMin, u_xMax;     // Ω range
+uniform float u_yMin, u_yMax;     // K range
+uniform int   u_iterations;       // number of map iterations
+uniform int   u_colorMode;        // 0 = continuous, 1 = discrete
+
+out vec4 fragColor;
+
+/* --- Constants -------------------------------------------------------- */
+const float PI     = 3.14159265358979323846;
+const float TWO_PI = 6.28318530717958647692;
+const int   MAX_ITER = 4000;      // shader loop ceiling
+
+/* -----------------------------------------------------------------------
+ *  computeWindingNumber
+ *
+ *  Iterates the lifted circle map   f(θ) = θ + Ω − (K/2π) sin(2πθ)
+ *  starting from θ₀ = 0.  Returns  θ_N / N.
+ *
+ *  We do NOT reduce θ mod 1 — the lift accumulates total rotation so
+ *  that θ_N / N converges to the true winding number.
+ * ----------------------------------------------------------------------- */
+float computeWindingNumber(float omega, float K) {
+    float theta = 0.0;
+
+    for (int i = 0; i < MAX_ITER; i++) {
+        if (i >= u_iterations) break;
+        theta += omega - (K / TWO_PI) * sin(TWO_PI * theta);
+    }
+
+    return theta / float(u_iterations);
+}
+
+/* -----------------------------------------------------------------------
+ *  hsv2rgb  — standard Hue-Saturation-Value to RGB conversion
+ * ----------------------------------------------------------------------- */
+vec3 hsv2rgb(float h, float s, float v) {
+    vec3 c = vec3(h, s, v);
+    vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+/* -----------------------------------------------------------------------
+ *  bestRational
+ *
+ *  Given a value x, finds the best rational approximation p/q using
+ *  the continued fraction algorithm.  Operates on fract(x) ∈ [0, 1).
+ *
+ *  Returns vec3(p, q, |x − p/q|).
+ *
+ *  We cap the denominator at 200 to keep tongue identification clean.
+ * ----------------------------------------------------------------------- */
+vec3 bestRational(float x) {
+    float target = fract(x);
+    if (target < 0.0) target += 1.0;         // ensure [0, 1)
+
+    /* Edge cases: target ≈ 0  or  ≈ 1 */
+    if (target < 1e-6)       return vec3(0.0, 1.0, target);
+    if (1.0 - target < 1e-6) return vec3(1.0, 1.0, 1.0 - target);
+
+    /*
+     * Standard continued-fraction convergent recurrence.
+     *
+     * We start with the "minus-one" convergents  h_{-1}/k_{-1} = 1/0
+     * and  h_0/k_0 = 0/1  (since a_0 = floor(target) = 0 for target<1).
+     * Then we immediately invert the remainder  r = 1/target  and
+     * proceed with the main loop.
+     */
+    float h_prev = 1.0, k_prev = 0.0;
+    float h_curr = 0.0, k_curr = 1.0;
+    float r = 1.0 / target;
+
+    float bestP = 0.0, bestQ = 1.0, bestErr = target;
+
+    for (int i = 0; i < 20; i++) {
+        float a = floor(r);                   // next partial quotient
+
+        float h_next = a * h_curr + h_prev;
+        float k_next = a * k_curr + k_prev;
+
+        if (k_next > 200.0) break;            // denominator cap
+
+        float err = abs(target - h_next / k_next);
+        if (err < bestErr) {
+            bestErr = err;
+            bestP   = h_next;
+            bestQ   = k_next;
+        }
+
+        if (err < 1e-10) break;               // exact match
+
+        h_prev = h_curr;  h_curr = h_next;
+        k_prev = k_curr;  k_curr = k_next;
+
+        float frac = r - a;
+        if (abs(frac) < 1e-10) break;         // CF terminated
+        r = 1.0 / frac;
+    }
+
+    return vec3(bestP, bestQ, bestErr);
+}
+
+/* -----------------------------------------------------------------------
+ *  denominatorColor
+ *
+ *  Assigns a distinct hue to each denominator q.  Low q gets saturated,
+ *  hand-picked colours; high q cycles via the golden angle.
+ * ----------------------------------------------------------------------- */
+vec3 denominatorColor(float q, float p) {
+    /* Hand-tuned palette for the most prominent tongues */
+    if (q <= 1.0) return vec3(0.92, 0.25, 0.20);   // q=1  vivid red
+    if (q <= 2.0) return vec3(0.20, 0.52, 1.00);   // q=2  strong blue
+    if (q <= 3.0) return vec3(0.18, 0.85, 0.35);   // q=3  green
+    if (q <= 4.0) return vec3(1.00, 0.65, 0.10);   // q=4  amber
+    if (q <= 5.0) return vec3(0.72, 0.22, 0.92);   // q=5  purple
+    if (q <= 6.0) return vec3(0.10, 0.82, 0.82);   // q=6  teal
+    if (q <= 7.0) return vec3(0.95, 0.42, 0.60);   // q=7  pink
+    if (q <= 8.0) return vec3(0.55, 0.80, 0.20);   // q=8  lime
+
+    /* Higher q: golden-ratio hue cycling with fading brightness */
+    float hue = fract((p / q) + q * 0.618033988749895);
+    float bri = max(0.35, 1.0 - q / 40.0);
+    return hsv2rgb(hue, 0.75, bri);
+}
+
+/* -----------------------------------------------------------------------
+ *  main  — entry point for every pixel
+ * ----------------------------------------------------------------------- */
+void main() {
+    /* Map pixel to parameter space */
+    vec2  uv    = gl_FragCoord.xy / u_resolution;
+    float omega = mix(u_xMin, u_xMax, uv.x);
+    float K     = mix(u_yMin, u_yMax, uv.y);
+
+    /* Compute winding number */
+    float w = computeWindingNumber(omega, K);
+
+    vec3 color;
+
+    if (u_colorMode == 0) {
+        /* ---- Continuous mode ----
+         * Map the winding number to a hue.  fract(w) ensures [0,1).
+         * A gentle brightness gradient in K adds depth.
+         */
+        float hue = fract(w);
+        float val = 0.92 + 0.06 * (1.0 - uv.y);    // slightly brighter at bottom
+        color = hsv2rgb(hue, 0.82, val);
+
+    } else {
+        /* ---- Discrete mode ----
+         * Find the best rational p/q and check if we are "close enough"
+         * to call this pixel mode-locked.
+         *
+         * Threshold rationale:  inside a tongue the computed winding
+         * number deviates from p/q by O(1/N) due to transient effects.
+         * We use a threshold proportional to 1/(q·N) to account for
+         * the fact that thinner tongues (larger q) need tighter tolerance.
+         */
+        vec3  pqe       = bestRational(w);
+        float p         = pqe.x;
+        float q         = pqe.y;
+        float err       = pqe.z;
+        float threshold = 0.45 / (q * float(u_iterations));
+
+        if (err < threshold) {
+            color = denominatorColor(q, p);
+        } else {
+            /* Quasiperiodic / chaotic — dark background with subtle
+               gradient so it doesn't look completely flat */
+            color = vec3(0.04 + 0.03 * uv.y);
+        }
+    }
+
+    fragColor = vec4(color, 1.0);
+}
+`;
+
+
+/* -----------------------------------------------------------------------
+ *  2.  APPLICATION STATE
+ * ----------------------------------------------------------------------- */
+
+/** View bounds — what region of (Ω, K) space is visible */
+let xMin = 0.0, xMax = 1.0;
+let yMin = 0.0, yMax = 1.0;
+
+/** Default bounds (for reset) */
+const DEF_XMIN = 0.0, DEF_XMAX = 1.0;
+const DEF_YMIN = 0.0, DEF_YMAX = 1.0;
+
+/** Rendering parameters */
+let iterations = 200;
+let colorMode  = 0;   // 0 = continuous, 1 = discrete
+
+/** Flag: do we need to redraw? */
+let dirty = true;
+
+/** Mouse interaction state */
+let isDragging  = false;
+let dragStartX  = 0;
+let dragStartY  = 0;
+let dragBoundsX = 0;   // xMin at drag start
+let dragBoundsY = 0;   // yMin at drag start
+
+
+/* -----------------------------------------------------------------------
+ *  3.  WEBGL SETUP
+ * ----------------------------------------------------------------------- */
+
+const canvas = document.getElementById('glcanvas');
+const container = document.getElementById('canvas-container');
+const gl = canvas.getContext('webgl2', { antialias: false, depth: false });
+
+if (!gl) {
+    document.getElementById('loading').textContent =
+        'WebGL 2.0 is not supported by your browser.';
+    throw new Error('WebGL 2 not available');
+}
+
+/**
+ * compileShader — compiles a GLSL shader and throws on error.
+ *
+ * @param {number} type   gl.VERTEX_SHADER or gl.FRAGMENT_SHADER
+ * @param {string} source GLSL source code
+ * @returns {WebGLShader}
+ */
+function compileShader(type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const log = gl.getShaderInfoLog(shader);
+        gl.deleteShader(shader);
+        throw new Error('Shader compile error:\n' + log);
+    }
+    return shader;
+}
+
+/* Compile and link the shader program */
+const vertShader = compileShader(gl.VERTEX_SHADER,   VERT_SRC);
+const fragShader = compileShader(gl.FRAGMENT_SHADER, FRAG_SRC);
+
+const program = gl.createProgram();
+gl.attachShader(program, vertShader);
+gl.attachShader(program, fragShader);
+gl.linkProgram(program);
+
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error('Program link error:\n' + gl.getProgramInfoLog(program));
+}
+
+gl.useProgram(program);
+
+/* Look up uniform locations (we'll set values each frame) */
+const loc = {
+    resolution: gl.getUniformLocation(program, 'u_resolution'),
+    xMin:       gl.getUniformLocation(program, 'u_xMin'),
+    xMax:       gl.getUniformLocation(program, 'u_xMax'),
+    yMin:       gl.getUniformLocation(program, 'u_yMin'),
+    yMax:       gl.getUniformLocation(program, 'u_yMax'),
+    iterations: gl.getUniformLocation(program, 'u_iterations'),
+    colorMode:  gl.getUniformLocation(program, 'u_colorMode'),
+};
+
+
+/* -----------------------------------------------------------------------
+ *  4.  CANVAS SIZING
+ *
+ *  We match the canvas backing-store resolution to the CSS pixel size
+ *  (device pixel ratio = 1) for performance.  Full DPR rendering would
+ *  quadruple the shader workload with little visual benefit for a
+ *  continuously-coloured image.
+ * ----------------------------------------------------------------------- */
+
+function resizeCanvas() {
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    if (canvas.width !== w || canvas.height !== h) {
+        canvas.width  = w;
+        canvas.height = h;
+        gl.viewport(0, 0, w, h);
+        dirty = true;
+    }
+}
+
+window.addEventListener('resize', () => { resizeCanvas(); });
+resizeCanvas();
+
+
+/* -----------------------------------------------------------------------
+ *  5.  RENDERING
+ * ----------------------------------------------------------------------- */
+
+/**
+ * draw — sets all uniforms and issues the draw call.
+ *
+ * We draw a full-screen quad using gl.drawArrays with TRIANGLE_STRIP.
+ * The vertex shader generates vertices from gl_VertexID (no VBO needed
+ * in WebGL 2).  To make this work we need a bound VAO, even if empty.
+ */
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+
+function draw() {
+    gl.uniform2f(loc.resolution, canvas.width, canvas.height);
+    gl.uniform1f(loc.xMin, xMin);
+    gl.uniform1f(loc.xMax, xMax);
+    gl.uniform1f(loc.yMin, yMin);
+    gl.uniform1f(loc.yMax, yMax);
+    gl.uniform1i(loc.iterations, iterations);
+    gl.uniform1i(loc.colorMode,  colorMode);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+/** Animation loop — only redraws when something changed */
+function frame() {
+    if (dirty) {
+        draw();
+        dirty = false;
+        updateViewInfo();
+    }
+    requestAnimationFrame(frame);
+}
+
+/* Hide the loading overlay once the first frame renders */
+requestAnimationFrame(() => {
+    dirty = true;
+    frame();
+    setTimeout(() => {
+        document.getElementById('loading').classList.add('hidden');
+    }, 120);
+});
+
+
+/* -----------------------------------------------------------------------
+ *  6.  MOUSE INTERACTION — Pan & Zoom
+ * ----------------------------------------------------------------------- */
+
+/**
+ * pixelToParam — converts a pixel position (relative to the canvas)
+ * to parameter-space coordinates (Ω, K).
+ *
+ * Note: canvas y=0 is at the TOP, but WebGL y=0 is at the BOTTOM.
+ * The fragment shader uses gl_FragCoord which has y=0 at bottom,
+ * so our mapping here must flip y.
+ */
+function pixelToParam(px, py) {
+    const w = canvas.width;
+    const h = canvas.height;
+    return {
+        omega: xMin + (px / w) * (xMax - xMin),
+        K:     yMin + ((h - py) / h) * (yMax - yMin)
+    };
+}
+
+/* --- Zoom (mouse wheel) ---
+ *
+ * Zooms centred on the cursor position so the point under the cursor
+ * stays fixed.  Scroll up = zoom in (shrink the view window).
+ */
+canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+
+    const rect  = canvas.getBoundingClientRect();
+    const px    = e.clientX - rect.left;
+    const py    = e.clientY - rect.top;
+    const param = pixelToParam(px, py);
+
+    /* Zoom factor: positive deltaY = scroll down = zoom out */
+    const zoomSpeed = 1.1;
+    const factor = e.deltaY > 0 ? zoomSpeed : 1 / zoomSpeed;
+
+    /* Scale the view around the cursor's parameter-space position */
+    xMin = param.omega + (xMin - param.omega) * factor;
+    xMax = param.omega + (xMax - param.omega) * factor;
+    yMin = param.K     + (yMin - param.K)     * factor;
+    yMax = param.K     + (yMax - param.K)     * factor;
+
+    dirty = true;
+}, { passive: false });
+
+/* --- Pan (click + drag) ---
+ *
+ * On mousedown we snapshot the current bounds.  During mousemove we
+ * compute how far the mouse has moved in parameter-space units and
+ * shift the bounds accordingly.
+ */
+canvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;               // left button only
+    isDragging  = true;
+    dragStartX  = e.clientX;
+    dragStartY  = e.clientY;
+    dragBoundsX = xMin;
+    dragBoundsY = yMin;
+    canvas.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+
+    const dx = e.clientX - dragStartX;        // pixels moved
+    const dy = e.clientY - dragStartY;
+
+    /* Convert pixel delta to parameter-space delta */
+    const dOmega = -dx / canvas.width  * (xMax - xMin);
+    const dK     =  dy / canvas.height * (yMax - yMin);   // y flipped
+
+    const w = xMax - xMin;
+    const h = yMax - yMin;
+
+    xMin = dragBoundsX + dOmega;
+    xMax = xMin + w;
+    yMin = dragBoundsY + dK;
+    yMax = yMin + h;
+
+    dirty = true;
+});
+
+window.addEventListener('mouseup', () => {
+    if (isDragging) {
+        isDragging = false;
+        canvas.style.cursor = 'crosshair';
+    }
+});
+
+
+/* -----------------------------------------------------------------------
+ *  7.  TOOLTIP — winding number on hover
+ *
+ *  We compute the winding number on the CPU for the single point
+ *  under the cursor.  Even at 4000 iterations this is instantaneous
+ *  for one point.
+ * ----------------------------------------------------------------------- */
+
+const tooltipEl = document.getElementById('tooltip');
+
+/**
+ * computeWindingNumberCPU — mirrors the GPU computation exactly.
+ *
+ * @param {number} omega  driving frequency Ω
+ * @param {number} K      coupling strength
+ * @param {number} N      iteration count
+ * @returns {number}       winding number estimate θ_N / N
+ */
+function computeWindingNumberCPU(omega, K, N) {
+    let theta = 0;
+    const TWO_PI = 2 * Math.PI;
+    for (let i = 0; i < N; i++) {
+        theta += omega - (K / TWO_PI) * Math.sin(TWO_PI * theta);
+    }
+    return theta / N;
+}
+
+/**
+ * rationalApprox — best rational approximation via continued fractions.
+ *
+ * Finds p/q with q ≤ maxDenom minimising |x − p/q|.  Works for any
+ * real x (positive, negative, or zero).
+ *
+ * @param {number} x        the value to approximate
+ * @param {number} maxDenom  maximum denominator (default 200)
+ * @returns {{p: number, q: number}}
+ */
+function rationalApprox(x, maxDenom = 200) {
+    if (Math.abs(x) < 1e-10) return { p: 0, q: 1 };
+
+    const sign = x < 0 ? -1 : 1;
+    x = Math.abs(x);
+
+    /* Start with the convergent h_{-1}/k_{-1} = 1/0 and h_0/k_0 = a_0/1 */
+    let h_prev = 1, k_prev = 0;
+    let h_curr = Math.floor(x), k_curr = 1;
+    let bestP = h_curr, bestQ = 1;
+    let bestErr = Math.abs(x - h_curr);
+
+    let remainder = x - Math.floor(x);
+
+    if (remainder < 1e-12) {
+        return { p: sign * bestP, q: 1 };
+    }
+
+    let r = 1 / remainder;
+
+    for (let i = 0; i < 40; i++) {
+        const a = Math.floor(r);
+        const h_next = a * h_curr + h_prev;
+        const k_next = a * k_curr + k_prev;
+
+        if (k_next > maxDenom) break;
+
+        const err = Math.abs(x - h_next / k_next);
+        if (err < bestErr) {
+            bestErr = err;
+            bestP   = h_next;
+            bestQ   = k_next;
+        }
+
+        if (err < 1e-12) break;
+
+        h_prev = h_curr;  h_curr = h_next;
+        k_prev = k_curr;  k_curr = k_next;
+
+        const frac = r - a;
+        if (Math.abs(frac) < 1e-12) break;
+        r = 1 / frac;
+    }
+
+    return { p: sign * bestP, q: bestQ };
+}
+
+/**
+ * Update the tooltip position and content on mouse move.
+ */
+canvas.addEventListener('mousemove', (e) => {
+    const rect  = canvas.getBoundingClientRect();
+    const px    = e.clientX - rect.left;
+    const py    = e.clientY - rect.top;
+
+    /* Don't show tooltip while dragging */
+    if (isDragging) {
+        tooltipEl.style.display = 'none';
+        return;
+    }
+
+    const param = pixelToParam(px, py);
+    const w     = computeWindingNumberCPU(param.omega, param.K, iterations);
+    const frac  = rationalApprox(w);
+
+    /* Build tooltip content */
+    tooltipEl.innerHTML =
+        `Ω = ${param.omega.toFixed(5)}<br>` +
+        `K = ${param.K.toFixed(5)}<br>` +
+        `ω ≈ <span class="frac">${frac.p}/${frac.q}</span>` +
+        ` <span style="color:var(--text-dim)">(${w.toFixed(6)})</span>`;
+
+    /* Position tooltip offset from cursor, clamped to viewport */
+    let tx = e.clientX + 16;
+    let ty = e.clientY - 10;
+    tooltipEl.style.display = 'block';
+    const tw = tooltipEl.offsetWidth;
+    const th = tooltipEl.offsetHeight;
+    if (tx + tw > window.innerWidth  - 8) tx = e.clientX - tw - 12;
+    if (ty + th > window.innerHeight - 8) ty = e.clientY - th - 4;
+    if (ty < 4) ty = 4;
+
+    tooltipEl.style.left = tx + 'px';
+    tooltipEl.style.top  = ty + 'px';
+});
+
+canvas.addEventListener('mouseleave', () => {
+    tooltipEl.style.display = 'none';
+});
+
+
+/* -----------------------------------------------------------------------
+ *  8.  UI CONTROLS
+ * ----------------------------------------------------------------------- */
+
+/** Switch coloring mode */
+function setColorMode(mode) {
+    colorMode = mode;
+    document.getElementById('btn-continuous').classList.toggle('active', mode === 0);
+    document.getElementById('btn-discrete').classList.toggle('active',  mode === 1);
+    dirty = true;
+}
+
+/** Reset view to default bounds */
+function resetView() {
+    xMin = DEF_XMIN;  xMax = DEF_XMAX;
+    yMin = DEF_YMIN;  yMax = DEF_YMAX;
+    dirty = true;
+}
+
+/** Iteration count input */
+const iterInput = document.getElementById('iter-input');
+iterInput.addEventListener('change', () => {
+    let val = parseInt(iterInput.value, 10);
+    if (isNaN(val) || val < 10)   val = 10;
+    if (val > 4000) val = 4000;
+    iterInput.value = val;
+    iterations = val;
+    dirty = true;
+});
+
+/** Update the view-info readout in the control bar */
+function updateViewInfo() {
+    document.getElementById('view-info').textContent =
+        `Ω ∈ [${xMin.toFixed(4)}, ${xMax.toFixed(4)}]   ` +
+        `K ∈ [${yMin.toFixed(4)}, ${yMax.toFixed(4)}]`;
+}
+
+/* Expose functions to inline handlers */
+window.setColorMode = setColorMode;
+window.resetView    = resetView;
+</script>
+</body>
+</html>
