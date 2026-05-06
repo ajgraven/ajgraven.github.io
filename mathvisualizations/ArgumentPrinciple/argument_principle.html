@@ -1,0 +1,1820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Argument Principle</title>
+
+<!-- ═══════════════════════════════════════════════════════════════
+  STYLES
+  
+  Color palette stored in CSS custom properties on :root for easy 
+  theming. All canvas chrome, cards, buttons use these variables.
+═══════════════════════════════════════════════════════════════ -->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Source+Sans+3:wght@300;400;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    /* Background layers */
+    --bg:      #0c1017;   /* page background */
+    --surface: #131a24;   /* card / canvas background */
+    --border:  #1e2a3a;   /* borders, button backgrounds */
+    --grid:    #1a2332;   /* grid lines on canvas */
+    --axis:    #2e3f54;   /* axis lines (slightly brighter) */
+
+    /* Text */
+    --text:        #c8d2dc;  /* default body text */
+    --text-dim:    #6b7b8d;  /* labels, captions */
+    --text-bright: #e8eef4;  /* headings, emphasis */
+
+    /* Accent colors */
+    --cyan:   #00d4e8;  /* domain curve, interactive highlights */
+    --orange: #ff8c38;  /* image curve */
+    --green:  #2ee87a;  /* zeros */
+    --red:    #ff3b5c;  /* poles */
+    --yellow: #ffd639;  /* function text in input */
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Source Sans 3', 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px 24px 40px; }
+
+  /* ── Header ─────────────────────────────────────── */
+  header { text-align: center; margin-bottom: 20px; }
+  header h1 { font-size: 1.5em; font-weight: 700; color: var(--text-bright); margin-bottom: 4px; }
+  header .subtitle { font-size: 0.85em; color: var(--text-dim); font-weight: 300; line-height: 1.5; max-width: 700px; margin: 0 auto; }
+  header .subtitle em { color: var(--cyan); font-style: normal; }
+
+  /* ── Function input bar ─────────────────────────── */
+  .func-input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+  .func-label { font-family: 'Fira Code', monospace; font-size: 1em; color: var(--text-bright); white-space: nowrap; }
+  #funcInput {
+    flex: 1; min-width: 260px; max-width: 520px; padding: 10px 14px;
+    background: #0a0e14; border: 1.5px solid var(--border); border-radius: 6px;
+    font-family: 'Fira Code', monospace; font-size: 0.95em; color: var(--yellow);
+    outline: none; transition: border-color 0.2s;
+  }
+  #funcInput:focus { border-color: var(--cyan); }
+  #funcInput.error { border-color: var(--red); color: var(--red); }
+  .parse-error { text-align: center; font-size: 0.75em; color: var(--red); min-height: 1.2em; margin-bottom: 4px; font-family: 'Fira Code', monospace; }
+
+  /* ── Preset buttons ─────────────────────────────── */
+  .presets { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .preset-btn {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
+    padding: 4px 10px; border-radius: 4px; font-family: 'Fira Code', monospace; font-size: 0.72em;
+    cursor: pointer; transition: all 0.15s; white-space: nowrap;
+  }
+  .preset-btn:hover  { background: var(--border); color: var(--text-bright); }
+  .preset-btn.active { background: var(--cyan); color: var(--bg); border-color: var(--cyan); }
+
+  /* ── Canvas layout ──────────────────────────────── */
+  .canvas-row { display: flex; gap: 16px; justify-content: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .canvas-panel { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; }
+  .canvas-label { font-size: 0.78em; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 6px; }
+  canvas { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; cursor: crosshair; display: block; }
+
+  /* ── Status line below canvases ─────────────────── */
+  .status-display { text-align: center; font-family: 'Fira Code', monospace; font-size: 0.76em; color: var(--text-dim); margin-bottom: 12px; min-height: 1.4em; }
+  .status-display span { color: var(--cyan); }
+
+  /* ── Slider controls ────────────────────────────── */
+  .controls-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .coeff-control { display: flex; align-items: center; gap: 5px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  .coeff-control label { font-family: 'Fira Code', monospace; font-size: 0.85em; font-weight: 600; min-width: 14px; }
+  .coeff-control input[type="range"] { width: 100px; accent-color: var(--cyan); cursor: pointer; }
+  .coeff-control .val { font-family: 'Fira Code', monospace; font-size: 0.78em; color: var(--text); min-width: 44px; text-align: right; }
+  .step-btn {
+    background: var(--border); border: none; color: var(--text);
+    width: 22px; height: 22px; border-radius: 3px; cursor: pointer;
+    font-size: 0.75em; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s;
+  }
+  .step-btn:hover { background: var(--axis); }
+
+  /* ── Action buttons ─────────────────────────────── */
+  .btn-row { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; }
+  .action-btn {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
+    padding: 6px 14px; border-radius: 5px;
+    font-family: 'Source Sans 3', sans-serif; font-size: 0.8em; font-weight: 600;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .action-btn:hover { background: var(--border); color: var(--text-bright); }
+
+  /* ── Info cards (zeros, poles, winding number) ──── */
+  .info-row { display: flex; gap: 12px; justify-content: center; align-items: stretch; flex-wrap: wrap; margin-bottom: 14px; }
+  .info-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 16px; text-align: center; min-width: 120px; }
+  .info-card .label { font-size: 0.68em; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim); margin-bottom: 3px; }
+  .info-card .value { font-family: 'Fira Code', monospace; font-size: 1.1em; font-weight: 600; }
+
+  /* ── Legend & instructions ───────────────────────── */
+  .legend { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; font-size: 0.75em; color: var(--text-dim); }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-swatch { width: 12px; height: 3px; border-radius: 2px; display: inline-block; }
+  .legend-dot { font-size: 11px; }
+
+  .instructions { text-align: center; font-size: 0.75em; color: var(--text-dim); margin-top: 14px; line-height: 1.7; font-weight: 300; }
+  .instructions strong { color: var(--text); font-weight: 600; }
+  .instructions code { font-family: 'Fira Code', monospace; color: var(--text); font-size: 0.95em; background: var(--surface); padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+
+<!-- ═══════════════════════════════════════════════════════════════
+  HTML STRUCTURE
+  
+  Layout from top to bottom:
+    1. Header with title / subtitle
+    2. Function input text field
+    3. Parse-error display (shows inline if expression invalid)
+    4. Preset buttons
+    5. Two side-by-side canvases (domain z-plane, image w-plane)
+    6. Status line (current circle center or freehand point count)
+    7. Radius slider
+    8. Action buttons (reset views, clear drawn curve)
+    9. Info cards (zeros inside, poles inside, Z−P, winding number)
+   10. Legend + usage instructions
+═══════════════════════════════════════════════════════════════ -->
+<body>
+<div class="container">
+
+  <!-- 1. Header -->
+  <header>
+    <h1>The Argument Principle</h1>
+    <p class="subtitle">The <a href="https://en.wikipedia.org/wiki/Argument_principle">argument principle</a> states that, for a meromorphic function <i>f</i> and a closed curve <i>&#947;</i>, the contour integral of <i>f'/f</i>  on <i>&#947;</i> is equal to the number of zeros minus the number of poles enclosed by <i>&#947;</i>. This is equivalent to the statement that the winding number <i>f(&#947;)</i> around the origin equals the number of zeros minus the number of poles enclosed by <i>&#947;</i>.</p>
+  </header>
+
+  <!-- 2–3. Function input + error display -->
+  <div class="func-input-row">
+    <span class="func-label">f(z) =</span>
+    <input id="funcInput" type="text" value="z^2/(z^2+1)" spellcheck="false" autocomplete="off">
+  </div>
+  <div class="parse-error" id="parseError"></div>
+
+  <!-- 4. Preset buttons -->
+  <div class="presets">
+    <button class="preset-btn active" onclick="setPreset(0)">z²/(z²+1)</button>
+    <button class="preset-btn" onclick="setPreset(1)">z³ − 1</button>
+    <button class="preset-btn" onclick="setPreset(2)">sin(z)/z</button>
+    <button class="preset-btn" onclick="setPreset(3)">exp(z) − 1</button>
+    <button class="preset-btn" onclick="setPreset(4)">z + 1/z</button>
+    <button class="preset-btn" onclick="setPreset(5)">(z−1)²(z+i)</button>
+    <button class="preset-btn" onclick="setPreset(6)">tan(z)</button>
+    <button class="preset-btn" onclick="setPreset(7)">z(z+1)/(z−1)</button>
+  </div>
+
+  <!-- 5. Side-by-side canvases -->
+  <div class="canvas-row">
+    <div class="canvas-panel">
+      <div class="canvas-label">Domain · z-plane</div>
+      <canvas id="domainCanvas" width="480" height="480"></canvas>
+    </div>
+    <div class="canvas-panel">
+      <div class="canvas-label">Image · w = f(z)</div>
+      <canvas id="imageCanvas" width="480" height="480"></canvas>
+    </div>
+  </div>
+
+  <!-- 6. Status line -->
+  <div class="status-display" id="statusDisplay"></div>
+
+  <!-- 7. Radius slider -->
+  <div class="controls-row">
+    <div class="coeff-control">
+      <label style="color:var(--cyan)">r</label>
+      <button class="step-btn" onclick="stepRadius(-0.1)">‹</button>
+      <input type="range" id="slider_r" min="0.05" max="6" step="0.05" value="1">
+      <button class="step-btn" onclick="stepRadius(0.1)">›</button>
+      <span class="val" id="val_r">1.00</span>
+    </div>
+  </div>
+
+  <!-- 8. Action buttons -->
+  <div class="btn-row">
+    <button class="action-btn" onclick="resetViews()">Reset views</button>
+    <button class="action-btn" onclick="clearFreehand()">Clear drawn curve</button>
+  </div>
+
+  <!-- 9. Info cards -->
+  <div class="info-row">
+    <div class="info-card"><div class="label">Zeros inside</div><div class="value" style="color:var(--green)" id="zerosInside">—</div></div>
+    <div class="info-card"><div class="label">Poles inside</div><div class="value" style="color:var(--red)" id="polesInside">—</div></div>
+    <div class="info-card"><div class="label">Zeros − Poles</div><div class="value" style="color:var(--text-bright)" id="difference">—</div></div>
+    <div class="info-card"><div class="label">Winding number</div><div class="value" style="color:var(--orange)" id="windingNum">—</div></div>
+  </div>
+
+  <!-- 10. Legend + instructions -->
+  <div class="legend">
+    <span class="legend-item"><span class="legend-swatch" style="background:var(--cyan)"></span> Domain curve</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:var(--orange)"></span> Image curve</span>
+    <span class="legend-item"><span class="legend-dot" style="color:var(--green)">✕</span> Zeros</span>
+    <span class="legend-item"><span class="legend-dot" style="color:var(--red)">✕</span> Poles</span>
+  </div>
+
+  <p class="instructions">
+    <strong>Left-drag</strong> on the z-plane to draw a closed curve.
+    <strong>Right-drag</strong> to pan. <strong>Scroll</strong> to zoom.
+    Without drawing, a circle of radius <strong>r</strong> follows the cursor.<br>
+    Use <code>z</code>, <code>i</code>, <code>pi</code>, and
+    <code>sin cos tan exp log sqrt</code> with <code>^</code> for powers.
+  </p>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+  APPLICATION CODE
+
+  Organized into these sections:
+    §1  Complex arithmetic (basic operations + standard functions)
+    §2  Expression parser  (tokenizer → AST → evaluator)
+    §3  Viewport state     (coordinate transforms, per-canvas zoom/pan)
+    §4  Application state  (current function, curve mode, cached singularities)
+    §5  Zero/pole finder   (grid scan → cluster → Newton refinement)
+    §6  Winding numbers    (argument-sum method for closed curves)
+    §7  Canvas drawing     (grid, crosses, curves, segments)
+    §8  Render loop        (main function that redraws both canvases)
+    §9  Function input     (parser integration, presets)
+    §10 Mouse interaction  (draw, pan, zoom, touch)
+    §11 UI controls        (radius slider, reset/clear buttons)
+    §12 Initialization
+═══════════════════════════════════════════════════════════════ -->
+<script>
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §1  COMPLEX ARITHMETIC                                   ║
+// ║                                                            ║
+// ║  Complex numbers are represented as 2-element arrays:      ║
+// ║     [real, imaginary]                                      ║
+// ║                                                            ║
+// ║  All operations return new arrays (no mutation).           ║
+// ╚════════════════════════════════════════════════════════════╝
+
+// ── Basic operations ──
+
+const cadd  = (a, b) => [a[0] + b[0], a[1] + b[1]];   // a + b
+const csub  = (a, b) => [a[0] - b[0], a[1] - b[1]];   // a − b
+const cneg  = (a)    => [-a[0], -a[1]];                 // −a
+const cconj = (a)    => [a[0], -a[1]];                  // conjugate ā
+const cscale = (s, a) => [s * a[0], s * a[1]];          // scalar × complex
+
+// a·b = (ac−bd) + (ad+bc)i
+const cmul = (a, b) => [
+  a[0] * b[0] - a[1] * b[1],
+  a[0] * b[1] + a[1] * b[0]
+];
+
+// a/b — returns a large sentinel if |b| ≈ 0 (near a pole)
+function cdiv(a, b) {
+  const denom = b[0] * b[0] + b[1] * b[1];
+  if (denom < 1e-30) return [1e12, 1e12];  // sentinel for "near infinity"
+  return [
+    (a[0] * b[0] + a[1] * b[1]) / denom,
+    (a[1] * b[0] - a[0] * b[1]) / denom
+  ];
+}
+
+const cabs2 = (a) => a[0] * a[0] + a[1] * a[1];          // |a|²
+const cabs  = (a) => Math.sqrt(a[0] * a[0] + a[1] * a[1]); // |a|
+
+
+// ── Standard complex functions ──
+// Each takes [re, im] and returns [re, im].
+
+// exp(z) = e^x (cos y + i sin y)
+function cexp(z) {
+  const e = Math.exp(z[0]);
+  return [e * Math.cos(z[1]), e * Math.sin(z[1])];
+}
+
+// log(z) = ln|z| + i·arg(z)   (principal branch, cut along negative real axis)
+function clog(z) {
+  const r = cabs(z);
+  if (r < 1e-30) return [-1e12, 0]; // log(0) sentinel
+  return [Math.log(r), Math.atan2(z[1], z[0])];
+}
+
+// sin(z) = sin(x)cosh(y) + i·cos(x)sinh(y)
+function csin(z) {
+  return [
+    Math.sin(z[0]) * Math.cosh(z[1]),
+    Math.cos(z[0]) * Math.sinh(z[1])
+  ];
+}
+
+// cos(z) = cos(x)cosh(y) − i·sin(x)sinh(y)
+function ccos(z) {
+  return [
+     Math.cos(z[0]) * Math.cosh(z[1]),
+    -Math.sin(z[0]) * Math.sinh(z[1])
+  ];
+}
+
+function ctan(z)  { return cdiv(csin(z), ccos(z)); }           // tan = sin/cos
+function csinh(z) { return cscale(0.5, csub(cexp(z), cexp(cneg(z)))); }
+function ccosh(z) { return cscale(0.5, cadd(cexp(z), cexp(cneg(z)))); }
+function ctanh(z) { return cdiv(csinh(z), ccosh(z)); }
+
+// sqrt(z) — principal square root via half-angle formula
+function csqrt(z) {
+  const r = Math.sqrt(cabs(z));
+  const t = Math.atan2(z[1], z[0]) / 2;
+  return [r * Math.cos(t), r * Math.sin(t)];
+}
+
+/**
+ * cpow(base, exp) — complex exponentiation base^exp.
+ *
+ * For integer exponents with Im(exp)=0, we use repeated multiplication
+ * for exact results (avoids branch-cut artifacts from log).
+ * For general complex exponents: base^exp = exp(exp · log(base)).
+ */
+function cpow(base, exp) {
+  // Fast path: integer real exponent
+  if (exp[1] === 0 && Number.isInteger(exp[0])) {
+    let n = exp[0];
+    if (n === 0) return [1, 0];
+    if (n > 0 && n <= 20) {
+      let result = [1, 0];
+      for (let k = 0; k < n; k++) result = cmul(result, base);
+      return result;
+    }
+    if (n < 0 && n >= -20) {
+      let result = [1, 0];
+      for (let k = 0; k < -n; k++) result = cmul(result, base);
+      return cdiv([1, 0], result);
+    }
+  }
+  // General case: base^exp = exp(exp · log(base))
+  if (cabs2(base) < 1e-30) return [0, 0]; // 0^anything = 0
+  return cexp(cmul(exp, clog(base)));
+}
+
+
+// ── Lookup table: name → complex function ──
+// These are the functions available in the expression parser.
+const cfuncs = {
+  sin:  csin,
+  cos:  ccos,
+  tan:  ctan,
+  exp:  cexp,
+  log:  clog,
+  ln:   clog,     // alias
+  sqrt: csqrt,
+  abs:  z => [cabs(z), 0],
+  arg:  z => [Math.atan2(z[1], z[0]), 0],
+  conj: cconj,
+  re:   z => [z[0], 0],
+  im:   z => [z[1], 0],
+  sinh: csinh,
+  cosh: ccosh,
+  tanh: ctanh,
+  sec:  z => cdiv([1, 0], ccos(z)),
+  csc:  z => cdiv([1, 0], csin(z)),
+  cot:  z => cdiv(ccos(z), csin(z)),
+};
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §2  EXPRESSION PARSER                                    ║
+// ║                                                            ║
+// ║  Converts a string like "z^2/(z^2+1)" into an AST, then  ║
+// ║  evaluates it for any complex z.                           ║
+// ║                                                            ║
+// ║  Pipeline:  string → tokenize → insertMul → parse → AST  ║
+// ║                                                            ║
+// ║  Grammar (precedence low→high):                            ║
+// ║    Expr  = Term (('+' | '-') Term)*                        ║
+// ║    Term  = Unary (('*' | '/') Unary)*                      ║
+// ║    Unary = '-' Unary | '+' Unary | Pow                     ║
+// ║    Pow   = Atom ('^' Unary)?          (right-assoc)        ║
+// ║    Atom  = NUMBER | IDENT | FUNC '(' Expr ')' | '(' Expr ')'  ║
+// ║                                                            ║
+// ║  AST node shapes:                                          ║
+// ║    { k:'num', v:[re,im] }        — literal complex number ║
+// ║    { k:'var', n:'z' }            — the variable z          ║
+// ║    { k:'neg', x:node }           — unary negation          ║
+// ║    { k:'bin', op:char, l, r }    — binary +−*/^            ║
+// ║    { k:'fn', n:string, x:node }  — function call           ║
+// ╚════════════════════════════════════════════════════════════╝
+
+/** Set of recognized function names (keys of cfuncs above). */
+const FUNC_NAMES = new Set(Object.keys(cfuncs));
+
+/** Named constants recognized by the parser. */
+const CONST_MAP = {
+  i:  [0, 1],           // imaginary unit
+  pi: [Math.PI, 0],
+  e:  [Math.E, 0],
+};
+
+/**
+ * tokenize(str) → array of token objects.
+ *
+ * Token types:
+ *   'N' — number literal   { t:'N', v:3.14 }
+ *   'I' — identifier       { t:'I', v:'z' }
+ *   'F' — function name    { t:'F', v:'sin' }
+ *   'O' — operator         { t:'O', v:'+' }
+ *   '(' and ')' — parens   { t:'(' } / { t:')' }
+ */
+function tokenize(str) {
+  const toks = [];
+  let i = 0;
+
+  while (i < str.length) {
+    // Skip whitespace
+    if (/\s/.test(str[i])) { i++; continue; }
+
+    // Number literal (e.g. "3", "3.14", ".5")
+    if (/[0-9]/.test(str[i]) || (str[i] === '.' && i + 1 < str.length && /[0-9]/.test(str[i + 1]))) {
+      let num = '';
+      while (i < str.length && /[0-9.]/.test(str[i])) num += str[i++];
+      toks.push({ t: 'N', v: parseFloat(num) });
+    }
+    // Identifier or function name
+    else if (/[a-zA-Z_]/.test(str[i])) {
+      let id = '';
+      while (i < str.length && /[a-zA-Z0-9_]/.test(str[i])) id += str[i++];
+      // Classify: is it a known function name, or an identifier?
+      toks.push(FUNC_NAMES.has(id) ? { t: 'F', v: id } : { t: 'I', v: id });
+    }
+    // Operators (handle ** as alias for ^)
+    else if ('+-*/^'.includes(str[i])) {
+      if (str[i] === '*' && str[i + 1] === '*') {
+        toks.push({ t: 'O', v: '^' });
+        i += 2;
+      } else {
+        toks.push({ t: 'O', v: str[i++] });
+      }
+    }
+    // Parentheses
+    else if (str[i] === '(') { toks.push({ t: '(' }); i++; }
+    else if (str[i] === ')') { toks.push({ t: ')' }); i++; }
+    // Commas (silently skipped — allows sin(z,) etc. without error)
+    else if (str[i] === ',') { i++; }
+    else {
+      throw new Error('Unknown char: ' + str[i]);
+    }
+  }
+  return toks;
+}
+
+/**
+ * insertMul(tokens) → tokens with implicit multiplication inserted.
+ *
+ * Handles cases like:
+ *   "2z"     → 2 * z
+ *   "z(z+1)" → z * (z+1)
+ *   "(a)(b)" → (a) * (b)
+ *   "3i"     → 3 * i
+ *
+ * A '*' is inserted between adjacent tokens where:
+ *   - the left token "ends" an expression (number, identifier, close paren)
+ *   - the right token "starts" an expression (number, identifier, function, open paren)
+ * Exception: function followed by '(' is NOT implicit multiplication.
+ */
+function insertMul(toks) {
+  const result = [];
+  for (let i = 0; i < toks.length; i++) {
+    result.push(toks[i]);
+
+    if (i + 1 < toks.length) {
+      const a = toks[i], b = toks[i + 1];
+      const aEndsExpr  = a.t === 'N' || a.t === 'I' || a.t === ')';
+      const bStartsExpr = b.t === 'N' || b.t === 'I' || b.t === 'F' || b.t === '(';
+
+      // Don't insert mul between a function name and its opening paren
+      if (a.t === 'F' && b.t === '(') continue;
+
+      if (aEndsExpr && bStartsExpr) {
+        result.push({ t: 'O', v: '*' });
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * parse(str) → AST node.
+ *
+ * Recursive-descent parser implementing the grammar above.
+ */
+function parse(str) {
+  const toks = insertMul(tokenize(str));
+  let pos = 0;
+  const peek = () => pos < toks.length ? toks[pos] : null;
+  const eat  = () => toks[pos++];
+
+  // Expr = Term (('+' | '-') Term)*
+  function pExpr() {
+    let left = pTerm();
+    while (peek() && peek().t === 'O' && (peek().v === '+' || peek().v === '-')) {
+      const op = eat().v;
+      left = { k: 'bin', op, l: left, r: pTerm() };
+    }
+    return left;
+  }
+
+  // Term = Unary (('*' | '/') Unary)*
+  function pTerm() {
+    let left = pUnary();
+    while (peek() && peek().t === 'O' && (peek().v === '*' || peek().v === '/')) {
+      const op = eat().v;
+      left = { k: 'bin', op, l: left, r: pUnary() };
+    }
+    return left;
+  }
+
+  // Unary = '-' Unary | '+' Unary | Pow
+  function pUnary() {
+    if (peek() && peek().t === 'O' && peek().v === '-') { eat(); return { k: 'neg', x: pUnary() }; }
+    if (peek() && peek().t === 'O' && peek().v === '+') { eat(); return pUnary(); }
+    return pPow();
+  }
+
+  // Pow = Atom ('^' Unary)?     — right-associative via calling pUnary for the exponent
+  function pPow() {
+    let base = pAtom();
+    if (peek() && peek().t === 'O' && peek().v === '^') {
+      eat();
+      return { k: 'bin', op: '^', l: base, r: pUnary() };
+    }
+    return base;
+  }
+
+  // Atom = NUMBER | IDENT | FUNC '(' Expr ')' | '(' Expr ')'
+  function pAtom() {
+    const t = peek();
+    if (!t) throw new Error('Unexpected end');
+
+    // Number literal → complex constant with zero imaginary part
+    if (t.t === 'N') { eat(); return { k: 'num', v: [t.v, 0] }; }
+
+    // Identifier: variable z, or a named constant (i, pi, e)
+    if (t.t === 'I') {
+      eat();
+      if (CONST_MAP[t.v]) return { k: 'num', v: CONST_MAP[t.v] };
+      if (t.v === 'z') return { k: 'var', n: 'z' };
+      throw new Error('Unknown: ' + t.v);
+    }
+
+    // Function call: name '(' expr ')'
+    if (t.t === 'F') {
+      eat();
+      if (!peek() || peek().t !== '(') throw new Error('Expected ( after ' + t.v);
+      eat();  // consume '('
+      const arg = pExpr();
+      if (!peek() || peek().t !== ')') throw new Error('Missing )');
+      eat();  // consume ')'
+      return { k: 'fn', n: t.v, x: arg };
+    }
+
+    // Parenthesized sub-expression
+    if (t.t === '(') {
+      eat();
+      const expr = pExpr();
+      if (!peek() || peek().t !== ')') throw new Error('Missing )');
+      eat();
+      return expr;
+    }
+
+    throw new Error('Unexpected: ' + (t.v || t.t));
+  }
+
+  const ast = pExpr();
+  if (pos < toks.length) throw new Error('Trailing: ' + toks[pos].v);
+  return ast;
+}
+
+
+/**
+ * evalAST(node, z) → [re, im]
+ *
+ * Recursively evaluates the AST for a given complex value of z.
+ */
+function evalAST(node, z) {
+  switch (node.k) {
+    case 'num': return node.v;
+    case 'var': return z;   // the only variable is z
+    case 'neg': return cneg(evalAST(node.x, z));
+    case 'bin': {
+      const l = evalAST(node.l, z);
+      const r = evalAST(node.r, z);
+      switch (node.op) {
+        case '+': return cadd(l, r);
+        case '-': return csub(l, r);
+        case '*': return cmul(l, r);
+        case '/': return cdiv(l, r);
+        case '^': return cpow(l, r);
+      }
+    }
+    case 'fn': return cfuncs[node.n](evalAST(node.x, z));
+  }
+}
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §3  VIEWPORT STATE                                       ║
+// ║                                                            ║
+// ║  Each canvas has an independent viewport defined by:       ║
+// ║    cx, cy  — center of the view in complex coordinates     ║
+// ║    range   — half-width: the view spans [cx−r, cx+r] in   ║
+// ║              the real direction (and same for imaginary)   ║
+// ║                                                            ║
+// ║  The canvas pixel grid is always W×H = 480×480.           ║
+// ║  CSS scales the canvas display size responsively, but the  ║
+// ║  internal resolution stays fixed.                          ║
+// ╚════════════════════════════════════════════════════════════╝
+
+const W = 480;   // canvas internal width (pixels)
+const H = 480;   // canvas internal height (pixels)
+
+/** Domain (z-plane) viewport — controlled by scroll/pan on left canvas. */
+const domView = { cx: 0, cy: 0, range: 4.5 };
+
+/** Image (w-plane) viewport — controlled by scroll/pan on right canvas. */
+const imgView = { cx: 0, cy: 0, range: 4.5 };
+
+/**
+ * toPixel(view, re, im) → [px, py]
+ *
+ * Converts complex coordinates (re + im·i) to canvas pixel coordinates
+ * for a given viewport. Note: y-axis is flipped (positive im → upward).
+ */
+function toPixel(v, re, im) {
+  const scale = W / (2 * v.range);  // pixels per unit in the complex plane
+  return [
+    W / 2 + (re - v.cx) * scale,    // center of canvas + offset
+    H / 2 - (im - v.cy) * scale     // flipped: +im is up
+  ];
+}
+
+/**
+ * fromPixel(view, px, py) → [re, im]
+ *
+ * Inverse of toPixel: converts canvas pixels back to complex coordinates.
+ */
+function fromPixel(v, px, py) {
+  const scale = W / (2 * v.range);
+  return [
+    v.cx + (px - W / 2) / scale,
+    v.cy - (py - H / 2) / scale
+  ];
+}
+
+/**
+ * canvasXY(event, canvas) → [px, py]
+ *
+ * Converts a mouse/touch event's page coordinates to canvas pixel
+ * coordinates, accounting for CSS scaling of the canvas element.
+ */
+function canvasXY(e, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  return [
+    (e.clientX - rect.left) * W / rect.width,
+    (e.clientY - rect.top)  * H / rect.height
+  ];
+}
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §4  APPLICATION STATE                                    ║
+// ╚════════════════════════════════════════════════════════════╝
+
+/** The currently compiled AST from the function input, or null if invalid. */
+let currentAST = null;
+
+/** Whether the last parse was successful. */
+let parseOk = true;
+
+/** Cached zeros/poles result from findSingularities(). */
+let cachedSing = null;
+
+/**
+ * Dirty flag for singularity cache. Set to true whenever the function
+ * or the domain viewport changes (so the grid scan region changes).
+ * Cleared after findSingularities() runs in render().
+ */
+let singDirty = true;
+
+/**
+ * Curve mode:
+ *   'circle'   — a circle of radius `circleRadius` follows the mouse cursor
+ *   'freehand' — user has drawn a custom curve by left-dragging
+ */
+let curveMode = 'circle';
+
+/** Center of the cursor-following circle, in complex coordinates. */
+let circleCenter = [0, 0];
+
+/** Radius of the cursor-following circle. */
+let circleRadius = 1;
+
+/** Array of [re, im] points for a user-drawn freehand curve. */
+let freehandCurve = [];
+
+/** True while the user is actively left-dragging to draw. */
+let isDrawing = false;
+
+/** True while the user is actively right-dragging to pan. */
+let isPanning = false;
+
+/** Which canvas is being panned (dCan or iCan), or null. */
+let panCanvas = null;
+
+/** Starting mouse position [clientX, clientY] when pan began. */
+let panStartPx = null;
+
+/** Viewport center {cx, cy} snapshot when pan began, for delta calculation. */
+let panStartView = null;
+
+// Canvas elements and 2D rendering contexts
+const dCan = document.getElementById('domainCanvas');
+const iCan = document.getElementById('imageCanvas');
+const dCtx = dCan.getContext('2d');
+const iCtx = iCan.getContext('2d');
+
+/**
+ * evalF(z) — evaluate the current function at complex point z.
+ * Delegates to evalAST with the compiled AST.
+ */
+function evalF(z) {
+  return evalAST(currentAST, z);
+}
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §5  NUMERICAL ZERO / POLE FINDER                         ║
+// ║                                                            ║
+// ║  Strategy:                                                 ║
+// ║    1. Evaluate |f(z)| and |1/f(z)| on an N×N grid         ║
+// ║       covering the visible domain (with some margin).      ║
+// ║    2. Find local minima of |f| (zero candidates) and      ║
+// ║       local minima of |1/f| (pole candidates).             ║
+// ║    3. Cluster nearby candidates (grid artifacts).          ║
+// ║    4. Refine each candidate with Newton's method.          ║
+// ║                                                            ║
+// ║  Why |1/f| for poles:                                      ║
+// ║    A pole of f is a zero of 1/f. Zeros produce clean,     ║
+// ║    well-behaved local minima on any reasonable grid.       ║
+// ║    Looking for "large |f|" is unreliable because the      ║
+// ║    nearest grid point to a pole may not be particularly    ║
+// ║    large (e.g. |f| ≈ 40, not 10^6).                       ║
+// ╚════════════════════════════════════════════════════════════╝
+
+/**
+ * findSingularities() → { zeros: [[re,im],...], poles: [[re,im],...] }
+ *
+ * Scans the current domain viewport for zeros and poles of f.
+ * Called lazily (only when singDirty is true) and cached.
+ */
+function findSingularities() {
+  if (!currentAST) return { zeros: [], poles: [] };
+
+  // Scan region: slightly larger than visible viewport
+  const R    = domView.range * 1.2;
+  const N    = 80;               // grid resolution (N×N)
+  const step = 2 * R / N;       // spacing between grid points
+  const cx   = domView.cx;
+  const cy   = domView.cy;
+
+  // ── Step 1: evaluate |f| and |1/f| on the grid ──
+  const fMag   = [];  // fMag[i][j]   = |f(z_ij)|
+  const invMag = [];  // invMag[i][j] = 1/|f(z_ij)|  (= |1/f(z_ij)|)
+
+  for (let i = 0; i <= N; i++) {
+    fMag[i] = [];
+    invMag[i] = [];
+    for (let j = 0; j <= N; j++) {
+      const re = cx - R + i * step;
+      const im = cy - R + j * step;
+      try {
+        const w = evalF([re, im]);
+        const m = cabs(w);
+        if (!isFinite(m)) {
+          fMag[i][j] = 1e15;
+          invMag[i][j] = 0;
+        } else {
+          fMag[i][j] = m;
+          invMag[i][j] = m > 1e-30 ? 1 / m : 1e15;
+        }
+      } catch {
+        fMag[i][j] = 1e15;
+        invMag[i][j] = 0;
+      }
+    }
+  }
+
+  // ── Step 2: find local minima on the grid (8-neighbor check) ──
+
+  /**
+   * gridMinima(grid, threshold) → array of [re, im] candidates.
+   *
+   * Returns grid points where grid[i][j] < threshold AND is a local
+   * minimum among all 8 neighbors. This catches both zeros (on fMag)
+   * and poles (on invMag).
+   */
+  function gridMinima(grid, threshold) {
+    const hits = [];
+    for (let i = 1; i < N; i++) {
+      for (let j = 1; j < N; j++) {
+        const val = grid[i][j];
+        if (val >= threshold) continue;
+
+        // Check all 8 neighbors
+        let isMin = true;
+        for (let di = -1; di <= 1 && isMin; di++) {
+          for (let dj = -1; dj <= 1 && isMin; dj++) {
+            if (di === 0 && dj === 0) continue;
+            if (grid[i + di][j + dj] < val) isMin = false;
+          }
+        }
+        if (isMin) {
+          hits.push([cx - R + i * step, cy - R + j * step]);
+        }
+      }
+    }
+    return hits;
+  }
+
+  // Zeros: local minima of |f| below 0.4
+  const rawZeros = gridMinima(fMag, 0.4);
+
+  // Poles: local minima of |1/f| below 0.15 (i.e. |f| > ~7)
+  const rawPoles = gridMinima(invMag, 0.15);
+
+  // ── Step 3+4: cluster nearby candidates, then refine with Newton ──
+
+  const zeros = [];
+  for (const z0 of cluster(rawZeros, step * 2)) {
+    const z = newton(z0, false);  // Newton on f(z) = 0
+    if (z && !zeros.some(q => cabs(csub(q, z)) < 0.05)) {
+      zeros.push(z);
+    }
+  }
+
+  const poles = [];
+  for (const p0 of cluster(rawPoles, step * 2)) {
+    const p = newton(p0, true);  // Newton on 1/f(z) = 0
+    if (p) {
+      // Verify it's genuinely a pole: |f(p)| should be large
+      try {
+        if (cabs(evalF(p)) > 10 && !poles.some(q => cabs(csub(q, p)) < 0.05)) {
+          poles.push(p);
+        }
+      } catch {
+        // If evalF throws (e.g. division by zero), that's also a pole signal
+        if (!poles.some(q => cabs(csub(q, p)) < 0.05)) poles.push(p);
+      }
+    }
+  }
+
+  return { zeros, poles };
+}
+
+
+/**
+ * cluster(points, threshold) → array of averaged cluster centers.
+ *
+ * Merges points that are within `threshold` of each other (greedy,
+ * single-linkage from the first point in each cluster). Returns the
+ * centroid of each cluster as the initial guess for Newton.
+ */
+function cluster(pts, thr) {
+  const out = [];
+  const used = new Set();
+
+  for (let i = 0; i < pts.length; i++) {
+    if (used.has(i)) continue;
+
+    // Start a new cluster seeded by pts[i]
+    let sumRe = pts[i][0], sumIm = pts[i][1], count = 1;
+
+    for (let j = i + 1; j < pts.length; j++) {
+      if (used.has(j)) continue;
+      if (Math.abs(pts[i][0] - pts[j][0]) < thr && Math.abs(pts[i][1] - pts[j][1]) < thr) {
+        sumRe += pts[j][0];
+        sumIm += pts[j][1];
+        count++;
+        used.add(j);
+      }
+    }
+
+    out.push([sumRe / count, sumIm / count]);
+    used.add(i);
+  }
+  return out;
+}
+
+
+/**
+ * newton(z0, pole) → [re, im] or null
+ *
+ * Newton's method to find a root near z0.
+ *
+ * If pole=false: finds a zero of f (i.e. solves f(z)=0).
+ * If pole=true:  finds a zero of 1/f (i.e. a pole of f).
+ *
+ * Uses forward-difference approximation for the derivative:
+ *   g'(z) ≈ (g(z+h) − g(z)) / h
+ * where g = f or g = 1/f depending on the `pole` flag.
+ *
+ * Returns null if Newton diverges, escapes to |z|>50, or doesn't
+ * converge within 30 iterations.
+ */
+function newton(z0, pole) {
+  let z = [...z0];
+  const h = 1e-7;  // finite-difference step
+
+  for (let k = 0; k < 30; k++) {
+    // Evaluate g(z) where g = f or g = 1/f
+    let gz;
+    try {
+      const w = evalF(z);
+      gz = pole ? cdiv([1, 0], w) : w;
+    } catch { return null; }
+
+    if (!isFinite(gz[0]) || !isFinite(gz[1])) return null;
+    if (cabs(gz) < 1e-12) return z;  // converged
+
+    // Approximate g'(z) via forward difference
+    let gzh;
+    try {
+      const wh = evalF([z[0] + h, z[1]]);
+      gzh = pole ? cdiv([1, 0], wh) : wh;
+    } catch { return null; }
+
+    const gPrime = cscale(1 / h, csub(gzh, gz));
+    if (cabs(gPrime) < 1e-15) return null;  // derivative too small
+
+    // Newton step: z ← z − g(z)/g'(z)
+    z = csub(z, cdiv(gz, gPrime));
+
+    if (!isFinite(z[0]) || !isFinite(z[1])) return null;
+    if (Math.abs(z[0]) > 50 || Math.abs(z[1]) > 50) return null;  // diverged
+  }
+
+  // Check final residual
+  let gz;
+  try {
+    gz = pole ? cdiv([1, 0], evalF(z)) : evalF(z);
+  } catch { return null; }
+  return cabs(gz) < 0.1 ? z : null;
+}
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §6  WINDING NUMBERS & IMAGE CURVE                        ║
+// ║                                                            ║
+// ║  The argument principle states:                            ║
+// ║                                                            ║
+// ║    (1/2πi) ∮_γ f'(z)/f(z) dz = #zeros − #poles inside γ  ║
+// ║                                                            ║
+// ║  Equivalently: the winding number of f(γ) around the      ║
+// ║  origin equals #zeros − #poles of f inside γ.              ║
+// ║                                                            ║
+// ║  We compute winding numbers by summing increments of       ║
+// ║  arg(w) around the discrete curve, with wrapping to        ║
+// ║  (−π, π] at each step. The total, divided by 2π and       ║
+// ║  rounded, gives the integer winding number.                ║
+// ╚════════════════════════════════════════════════════════════╝
+
+/**
+ * windingNumber(curve, pt) → integer
+ *
+ * Computes the winding number of a closed curve around a point pt.
+ * The curve is treated as closed (last point connects back to first).
+ *
+ * Used to determine whether a given zero/pole lies "inside" a
+ * user-drawn freehand curve.
+ */
+function windingNumber(curve, pt) {
+  if (curve.length < 3) return 0;
+
+  let total = 0;
+  for (let i = 0; i < curve.length; i++) {
+    const j = (i + 1) % curve.length;
+
+    // Angle increment from curve[i] to curve[j] as seen from pt
+    let dTheta = Math.atan2(curve[j][1] - pt[1], curve[j][0] - pt[0])
+               - Math.atan2(curve[i][1] - pt[1], curve[i][0] - pt[0]);
+
+    // Wrap to (−π, π]
+    if (dTheta >  Math.PI) dTheta -= 2 * Math.PI;
+    if (dTheta < -Math.PI) dTheta += 2 * Math.PI;
+
+    total += dTheta;
+  }
+  return Math.round(total / (2 * Math.PI));
+}
+
+
+/**
+ * windingImage(domCurve) → integer
+ *
+ * Computes the winding number of the image curve f(γ) around the origin.
+ * This is the "right-hand side" of the argument principle.
+ *
+ * Points where |f(z)| is very large (near a pole) are skipped to
+ * avoid wild angle jumps from numerical overflow.
+ */
+function windingImage(domCurve) {
+  if (domCurve.length < 3) return 0;
+
+  const n    = domCurve.length;
+  const CLIP = 200;  // skip image points with |w| > CLIP
+
+  // Map the domain curve through f
+  const img = [];
+  for (let k = 0; k < n; k++) {
+    try   { img.push(evalF(domCurve[k])); }
+    catch { img.push([1e12, 0]); }   // sentinel for failed evaluation
+  }
+
+  // Sum the argument increments around the origin
+  let total = 0;
+  for (let k = 0; k < n; k++) {
+    const j = (k + 1) % n;
+    if (cabs(img[k]) > CLIP || cabs(img[j]) > CLIP) continue;
+
+    let dTheta = Math.atan2(img[j][1], img[j][0])
+               - Math.atan2(img[k][1], img[k][0]);
+
+    if (dTheta >  Math.PI) dTheta -= 2 * Math.PI;
+    if (dTheta < -Math.PI) dTheta += 2 * Math.PI;
+    total += dTheta;
+  }
+  return Math.round(total / (2 * Math.PI));
+}
+
+
+/**
+ * imageSegments(curve, clipRange) → array of segments
+ *
+ * Maps the domain curve through f and splits the result into segments,
+ * breaking wherever |f(z)| exceeds clipRange. This prevents the canvas
+ * from drawing wild lines through near-pole regions.
+ *
+ * Each segment is an array of [re, im] points in the image plane.
+ * If the entire curve stays within clipRange, returns a single segment
+ * that closes back to the first point.
+ */
+function imageSegments(curve, clipRange) {
+  const CLIP = clipRange || 30;
+  const segs = [];
+  let seg = [];
+
+  for (const pt of curve) {
+    let w;
+    try   { w = evalF(pt); }
+    catch { w = [1e12, 0]; }
+
+    if (cabs(w) < CLIP) {
+      seg.push(w);
+    } else {
+      // Break the segment — the image jumped through infinity
+      if (seg.length > 1) segs.push(seg);
+      seg = [];
+    }
+  }
+
+  // Close the curve back to the first image point if possible
+  if (seg.length > 0) {
+    let w0;
+    try   { w0 = evalF(curve[0]); }
+    catch { w0 = [1e12, 0]; }
+
+    if (cabs(w0) < CLIP && segs.length === 0) {
+      seg.push(w0);  // close the single segment
+    }
+    if (seg.length > 1) segs.push(seg);
+  }
+
+  return segs;
+}
+
+
+/**
+ * makeCircle(center, radius, nPoints) → array of [re, im]
+ *
+ * Generates a uniformly-sampled circle in the complex plane.
+ */
+function makeCircle(center, radius, nPoints) {
+  nPoints = nPoints || 500;
+  const pts = [];
+  for (let k = 0; k < nPoints; k++) {
+    const t = 2 * Math.PI * k / nPoints;
+    pts.push([
+      center[0] + radius * Math.cos(t),
+      center[1] + radius * Math.sin(t)
+    ]);
+  }
+  return pts;
+}
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §7  CANVAS DRAWING UTILITIES                             ║
+// ║                                                            ║
+// ║  All drawing functions take a viewport `v` so they work   ║
+// ║  with either the domain or image canvas.                   ║
+// ╚════════════════════════════════════════════════════════════╝
+
+/**
+ * drawGrid(ctx, view)
+ *
+ * Draws an adaptive grid with:
+ *   - Minor grid lines at a "nice" spacing (1, 2, 5 × 10^n)
+ *   - Heavier axis lines at re=0 and im=0
+ *   - Numeric tick labels along each axis
+ *
+ * The grid spacing adapts to the current zoom level so there
+ * are always roughly 6–12 visible grid lines per axis.
+ */
+function drawGrid(ctx, v) {
+  // ── Choose a "nice" grid step ──
+  // Target: about 8 grid lines visible across the viewport width
+  const rawStep = v.range * 2 / 8;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  let step;
+  if      (rawStep / magnitude < 2) step = magnitude;       // e.g. 0.1, 1, 10
+  else if (rawStep / magnitude < 5) step = 2 * magnitude;   // e.g. 0.2, 2, 20
+  else                               step = 5 * magnitude;  // e.g. 0.5, 5, 50
+
+  // Viewport bounds in complex coords
+  const lo_re = v.cx - v.range, hi_re = v.cx + v.range;
+  const lo_im = v.cy - v.range, hi_im = v.cy + v.range;
+
+  // ── Minor grid lines ──
+  ctx.strokeStyle = '#1a2332';
+  ctx.lineWidth = 1;
+
+  // Vertical lines (constant real part)
+  const firstRe = Math.ceil(lo_re / step) * step;
+  for (let re = firstRe; re <= hi_re; re += step) {
+    if (Math.abs(re) < step * 0.01) continue;  // skip the axis
+    const [px] = toPixel(v, re, 0);
+    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, H); ctx.stroke();
+  }
+
+  // Horizontal lines (constant imaginary part)
+  const firstIm = Math.ceil(lo_im / step) * step;
+  for (let im = firstIm; im <= hi_im; im += step) {
+    if (Math.abs(im) < step * 0.01) continue;
+    const [, py] = toPixel(v, 0, im);
+    ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(W, py); ctx.stroke();
+  }
+
+  // ── Axes (re=0 and im=0) ──
+  ctx.strokeStyle = '#2e3f54';
+  ctx.lineWidth = 1.5;
+  const [ox, oy] = toPixel(v, 0, 0);
+  if (ox >= 0 && ox <= W) { ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox, H); ctx.stroke(); }
+  if (oy >= 0 && oy <= H) { ctx.beginPath(); ctx.moveTo(0, oy); ctx.lineTo(W, oy); ctx.stroke(); }
+
+  // ── Tick labels ──
+  ctx.fillStyle = '#4a5a6d';
+  ctx.font = '10px "Fira Code", monospace';
+  const dp = step < 1 ? Math.ceil(-Math.log10(step)) : 0;  // decimal places
+
+  // Real-axis labels
+  for (let re = firstRe; re <= hi_re; re += step) {
+    if (Math.abs(re) < step * 0.01) continue;
+    const [px] = toPixel(v, re, 0);
+    if (oy >= 0 && oy <= H) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(re.toFixed(dp), px, Math.min(oy + 4, H - 12));
+    }
+  }
+
+  // Imaginary-axis labels
+  for (let im = firstIm; im <= hi_im; im += step) {
+    if (Math.abs(im) < step * 0.01) continue;
+    const [, py] = toPixel(v, 0, im);
+    if (ox >= 0 && ox <= W) {
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(im.toFixed(dp) + 'i', Math.max(ox - 5, 38), py);
+    }
+  }
+}
+
+
+/**
+ * drawCross(ctx, view, re, im, color, size)
+ *
+ * Draws an × marker at a complex point. Used to mark zeros (green)
+ * and poles (red) on the domain canvas.
+ */
+function drawCross(ctx, v, re, im, color, sz) {
+  sz = sz || 7;
+  const [px, py] = toPixel(v, re, im);
+
+  // Skip if off-screen
+  if (px < -20 || px > W + 20 || py < -20 || py > H + 20) return;
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(px - sz, py - sz); ctx.lineTo(px + sz, py + sz);
+  ctx.moveTo(px + sz, py - sz); ctx.lineTo(px - sz, py + sz);
+  ctx.stroke();
+}
+
+
+/**
+ * drawClosedCurve(ctx, view, curve, color, lineWidth)
+ *
+ * Strokes a closed polyline through the given complex points.
+ * Used for the domain circle / freehand curve.
+ */
+function drawClosedCurve(ctx, v, curve, color, lw) {
+  if (curve.length < 2) return;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lw || 2;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  let [px, py] = toPixel(v, curve[0][0], curve[0][1]);
+  ctx.moveTo(px, py);
+  for (let k = 1; k < curve.length; k++) {
+    [px, py] = toPixel(v, curve[k][0], curve[k][1]);
+    ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.stroke();
+}
+
+
+/**
+ * drawSegs(ctx, view, segments, color)
+ *
+ * Strokes an array of open polyline segments (not closed).
+ * Used for the image curve, which may be broken into pieces
+ * where f passes through near-infinity.
+ */
+function drawSegs(ctx, v, segs, color) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  for (const seg of segs) {
+    if (seg.length < 2) continue;
+    ctx.beginPath();
+    let [px, py] = toPixel(v, seg[0][0], seg[0][1]);
+    ctx.moveTo(px, py);
+    for (let k = 1; k < seg.length; k++) {
+      [px, py] = toPixel(v, seg[k][0], seg[k][1]);
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+}
+
+
+/**
+ * fillClosedCurve(ctx, view, curve, color)
+ *
+ * Fills the interior of a closed curve with a translucent color.
+ * Gives a visual cue for which region "inside" refers to.
+ */
+function fillClosedCurve(ctx, v, curve, color) {
+  if (curve.length < 3) return;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  let [px, py] = toPixel(v, curve[0][0], curve[0][1]);
+  ctx.moveTo(px, py);
+  for (let k = 1; k < curve.length; k++) {
+    [px, py] = toPixel(v, curve[k][0], curve[k][1]);
+    ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §8  RENDER LOOP                                          ║
+// ║                                                            ║
+// ║  render() is the main draw function. Called on every       ║
+// ║  mouse move, slider change, function edit, zoom, or pan.  ║
+// ║  It redraws both canvases from scratch each time.          ║
+// ╚════════════════════════════════════════════════════════════╝
+
+function render() {
+  // ── Clear both canvases and draw grids ──
+  dCtx.clearRect(0, 0, W, H);
+  iCtx.clearRect(0, 0, W, H);
+  drawGrid(dCtx, domView);
+  drawGrid(iCtx, imgView);
+
+  // ── Origin dot on image canvas (the point the winding number is about) ──
+  const [ox, oy] = toPixel(imgView, 0, 0);
+  if (ox > -5 && ox < W + 5 && oy > -5 && oy < H + 5) {
+    iCtx.fillStyle = 'rgba(255,255,255,0.3)';
+    iCtx.beginPath();
+    iCtx.arc(ox, oy, 4, 0, 2 * Math.PI);
+    iCtx.fill();
+  }
+
+  // ── Early exit if function hasn't parsed ──
+  if (!parseOk || !currentAST) {
+    ['zerosInside', 'polesInside', 'difference', 'windingNum']
+      .forEach(id => document.getElementById(id).textContent = '—');
+    return;
+  }
+
+  // ── Recompute zeros/poles if needed ──
+  if (singDirty) {
+    cachedSing = findSingularities();
+    singDirty = false;
+  }
+  const { zeros, poles } = cachedSing;
+
+  // ── Draw zeros (green ×) and poles (red ×) on domain canvas ──
+  for (const z of zeros) drawCross(dCtx, domView, z[0], z[1], '#2ee87a', 8);
+  for (const p of poles) drawCross(dCtx, domView, p[0], p[1], '#ff3b5c', 8);
+
+  // ── Determine the active domain curve ──
+  let curve;
+  if (curveMode === 'freehand' && freehandCurve.length >= 3) {
+    curve = freehandCurve;
+  } else {
+    curve = makeCircle(circleCenter, circleRadius, 500);
+  }
+
+  // ── Draw the domain curve (fill + stroke) ──
+  fillClosedCurve(dCtx, domView, curve, 'rgba(0, 212, 232, 0.06)');
+  drawClosedCurve(dCtx, domView, curve, '#00d4e8', 2.2);
+
+  // ── In circle mode, draw a small crosshair at the center ──
+  if (curveMode === 'circle') {
+    const [cx, cy] = toPixel(domView, circleCenter[0], circleCenter[1]);
+    dCtx.strokeStyle = 'rgba(0, 212, 232, 0.5)';
+    dCtx.lineWidth = 1;
+    dCtx.setLineDash([4, 4]);
+    dCtx.beginPath(); dCtx.moveTo(cx - 10, cy); dCtx.lineTo(cx + 10, cy); dCtx.stroke();
+    dCtx.beginPath(); dCtx.moveTo(cx, cy - 10); dCtx.lineTo(cx, cy + 10); dCtx.stroke();
+    dCtx.setLineDash([]);
+  }
+
+  // ── Draw the image curve (the curve f(γ) in the w-plane) ──
+  const clipR = imgView.range * 8;
+  drawSegs(iCtx, imgView, imageSegments(curve, clipR), '#ff8c38');
+
+  // ── Compute the winding number of f(γ) around the origin ──
+  const wn = windingImage(curve);
+
+  // ── Count zeros/poles inside the domain curve ──
+  let zIn = 0, pIn = 0;
+
+  if (curveMode === 'circle') {
+    // For a circle, "inside" = distance from center < radius
+    const r2 = circleRadius * circleRadius;
+    for (const z of zeros) {
+      const dx = z[0] - circleCenter[0], dy = z[1] - circleCenter[1];
+      if (dx * dx + dy * dy < r2 - 1e-6) zIn++;
+    }
+    for (const p of poles) {
+      const dx = p[0] - circleCenter[0], dy = p[1] - circleCenter[1];
+      if (dx * dx + dy * dy < r2 - 1e-6) pIn++;
+    }
+  } else if (freehandCurve.length >= 3) {
+    // For a freehand curve, use the winding number test
+    for (const z of zeros) { if (windingNumber(curve, z) !== 0) zIn++; }
+    for (const p of poles) { if (windingNumber(curve, p) !== 0) pIn++; }
+  }
+
+  // ── Update the info cards ──
+  document.getElementById('zerosInside').textContent = zIn;
+  document.getElementById('polesInside').textContent = pIn;
+  document.getElementById('difference').textContent  = zIn - pIn;
+  document.getElementById('windingNum').textContent   = wn;
+
+  // Highlight in yellow if there's a mismatch (shouldn't happen unless
+  // a zero/pole is on or very near the curve boundary)
+  const dEl = document.getElementById('difference');
+  const wEl = document.getElementById('windingNum');
+  dEl.style.color = (zIn - pIn === wn) ? 'var(--text-bright)' : '#ff6';
+  wEl.style.color = (zIn - pIn === wn) ? 'var(--orange)'      : '#ff6';
+
+  // ── Update the status display below the canvases ──
+  if (curveMode === 'circle') {
+    const [re, im] = circleCenter;
+    document.getElementById('statusDisplay').innerHTML =
+      'Circle at <span>' + re.toFixed(2) + (im >= 0 ? ' + ' : ' − ') +
+      Math.abs(im).toFixed(2) + 'i</span>, radius <span>' + circleRadius.toFixed(2) + '</span>';
+  } else {
+    document.getElementById('statusDisplay').innerHTML =
+      'Freehand curve — <span>' + freehandCurve.length + ' pts</span>';
+  }
+}
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §9  FUNCTION INPUT & PRESETS                             ║
+// ╚════════════════════════════════════════════════════════════╝
+
+/**
+ * Preset expressions. Each string is placed directly into the input
+ * field when the corresponding button is clicked.
+ */
+const PRESETS = [
+  'z^2/(z^2+1)',        // double zero at 0, poles at ±i
+  'z^3-1',              // cube roots of unity
+  'sin(z)/z',           // removable singularity at 0, zeros at nπ
+  'exp(z)-1',           // zeros at 2nπi
+  'z+1/z',              // Joukowski map, pole at 0
+  '(z-1)^2*(z+i)',      // double zero at 1, simple zero at −i
+  'tan(z)',             // poles at (n+½)π, zeros at nπ
+  'z*(z+1)/(z-1)',      // pole at 1, zeros at 0 and −1
+];
+
+const funcInput  = document.getElementById('funcInput');
+const parseError = document.getElementById('parseError');
+
+/**
+ * compileFunc()
+ *
+ * Parses the current contents of the function input field.
+ * Updates currentAST, parseOk, and the error display.
+ * Sets singDirty=true so zeros/poles are recomputed on next render.
+ */
+function compileFunc() {
+  const str = funcInput.value.trim();
+  if (!str) {
+    parseOk = false;
+    parseError.textContent = 'Empty expression';
+    funcInput.classList.add('error');
+    return;
+  }
+  try {
+    currentAST = parse(str);
+    // Smoke-test: evaluate at z = 1+i to catch runtime errors early
+    evalAST(currentAST, [1, 1]);
+    parseOk = true;
+    parseError.textContent = '';
+    funcInput.classList.remove('error');
+    singDirty = true;
+  } catch (e) {
+    parseOk = false;
+    parseError.textContent = e.message;
+    funcInput.classList.add('error');
+  }
+}
+
+// Re-parse on every keystroke in the input field
+funcInput.addEventListener('input', () => {
+  // Clear any active preset highlight
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  compileFunc();
+  render();
+});
+
+/**
+ * setPreset(index)
+ *
+ * Loads a preset expression into the input field and recompiles.
+ */
+function setPreset(idx) {
+  funcInput.value = PRESETS[idx];
+  document.querySelectorAll('.preset-btn').forEach((b, i) =>
+    b.classList.toggle('active', i === idx)
+  );
+  compileFunc();
+  render();
+}
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §10  MOUSE / TOUCH INTERACTION                           ║
+// ║                                                            ║
+// ║  Domain canvas (left):                                     ║
+// ║    • Mouse move (no button) — circle follows cursor        ║
+// ║    • Left-drag  — draw a freehand closed curve             ║
+// ║    • Right-drag — pan the z-plane viewport                 ║
+// ║    • Scroll     — zoom the z-plane viewport                ║
+// ║                                                            ║
+// ║  Image canvas (right):                                     ║
+// ║    • Right-drag — pan the w-plane viewport                 ║
+// ║    • Scroll     — zoom the w-plane viewport                ║
+// ║                                                            ║
+// ║  The two viewports are independent, so you can zoom into   ║
+// ║  different regions of the domain and image planes.          ║
+// ╚════════════════════════════════════════════════════════════╝
+
+// Suppress the browser context menu on canvases (we use right-click for pan)
+dCan.addEventListener('contextmenu', e => e.preventDefault());
+iCan.addEventListener('contextmenu', e => e.preventDefault());
+
+
+// ── Domain canvas mouse events ──
+
+dCan.addEventListener('mousedown', e => {
+  if (e.button === 2) {
+    // ── Right-click: start panning the domain view ──
+    isPanning = true;
+    panCanvas = dCan;
+    panStartPx = [e.clientX, e.clientY];
+    panStartView = { cx: domView.cx, cy: domView.cy };
+    dCan.style.cursor = 'grabbing';
+    e.preventDefault();
+  } else if (e.button === 0) {
+    // ── Left-click: start drawing a freehand curve ──
+    isDrawing = true;
+    curveMode = 'freehand';
+    freehandCurve = [];
+    const [px, py] = canvasXY(e, dCan);
+    const [re, im] = fromPixel(domView, px, py);
+    freehandCurve.push([re, im]);
+    dCan.style.cursor = 'crosshair';
+  }
+});
+
+dCan.addEventListener('mousemove', e => {
+  if (isPanning && panCanvas === dCan) {
+    // ── Panning: shift viewport center by the mouse delta ──
+    const rect = dCan.getBoundingClientRect();
+    const scale = domView.range * 2 / rect.width;  // complex units per CSS pixel
+    domView.cx = panStartView.cx - (e.clientX - panStartPx[0]) * scale;
+    domView.cy = panStartView.cy + (e.clientY - panStartPx[1]) * scale;
+    singDirty = true;  // viewport moved → need to re-scan for zeros/poles
+    render();
+  }
+  else if (isDrawing) {
+    // ── Drawing: append point if far enough from the last one ──
+    const [px, py] = canvasXY(e, dCan);
+    const [re, im] = fromPixel(domView, px, py);
+    const last = freehandCurve[freehandCurve.length - 1];
+    const dx = re - last[0], dy = im - last[1];
+    const minDist = domView.range * 2 / W * 2;  // ~2 pixels in world coords
+    if (dx * dx + dy * dy > minDist * minDist) {
+      freehandCurve.push([re, im]);
+      render();
+    }
+  }
+  else {
+    // ── Idle: circle follows cursor ──
+    const [px, py] = canvasXY(e, dCan);
+    circleCenter = fromPixel(domView, px, py);
+    if (curveMode === 'circle') render();
+  }
+});
+
+
+// ── Image canvas mouse events (right-drag pan only) ──
+
+iCan.addEventListener('mousedown', e => {
+  if (e.button === 2) {
+    isPanning = true;
+    panCanvas = iCan;
+    panStartPx = [e.clientX, e.clientY];
+    panStartView = { cx: imgView.cx, cy: imgView.cy };
+    iCan.style.cursor = 'grabbing';
+    e.preventDefault();
+  }
+});
+
+iCan.addEventListener('mousemove', e => {
+  if (isPanning && panCanvas === iCan) {
+    const rect = iCan.getBoundingClientRect();
+    const scale = imgView.range * 2 / rect.width;
+    imgView.cx = panStartView.cx - (e.clientX - panStartPx[0]) * scale;
+    imgView.cy = panStartView.cy + (e.clientY - panStartPx[1]) * scale;
+    render();
+  }
+});
+
+
+// ── Global mouseup: finalize draw or pan ──
+
+window.addEventListener('mouseup', e => {
+  if (isPanning) {
+    isPanning = false;
+    if (panCanvas) panCanvas.style.cursor = 'crosshair';
+    panCanvas = null;
+  }
+  if (isDrawing) {
+    isDrawing = false;
+    // Need at least 3 points for a meaningful closed curve
+    if (freehandCurve.length >= 3) {
+      render();
+    } else {
+      curveMode = 'circle';
+      render();
+    }
+  }
+});
+
+
+// ── Scroll-to-zoom on both canvases ──
+
+/**
+ * zoomView(view, wheelEvent, canvas)
+ *
+ * Zooms the viewport in/out, centered on the cursor position.
+ * The complex point under the cursor stays fixed after the zoom
+ * (this is achieved by adjusting the viewport center).
+ */
+function zoomView(v, e, canvas) {
+  // Find the complex coords under the cursor BEFORE zoom
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * W / rect.width;
+  const my = (e.clientY - rect.top)  * H / rect.height;
+  const [wRe, wIm] = fromPixel(v, mx, my);
+
+  // Apply zoom factor
+  const factor = e.deltaY > 0 ? 1.12 : 1 / 1.12;  // scroll down = zoom out
+  v.range *= factor;
+  v.range = Math.max(0.01, Math.min(100, v.range));  // clamp
+
+  // Adjust center so [wRe, wIm] still maps to [mx, my] after zoom
+  const newScale = W / (2 * v.range);
+  v.cx = wRe - (mx - W / 2) / newScale;
+  v.cy = wIm + (my - H / 2) / newScale;
+}
+
+dCan.addEventListener('wheel', e => {
+  e.preventDefault();
+  zoomView(domView, e, dCan);
+  singDirty = true;
+  render();
+}, { passive: false });
+
+iCan.addEventListener('wheel', e => {
+  e.preventDefault();
+  zoomView(imgView, e, iCan);
+  render();
+}, { passive: false });
+
+
+// ── Touch support (mobile) ──
+
+let touchState = null;
+
+/**
+ * Touch interaction:
+ *   - Single finger on domain canvas = draw freehand
+ *   - Single finger on image canvas  = pan
+ *   - Two fingers (either canvas)    = pinch-to-zoom
+ */
+function handleTouchStart(e, canvas, view) {
+  e.preventDefault();
+
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    const [px, py] = canvasXY(t, canvas);
+
+    if (canvas === dCan) {
+      // Single touch on domain canvas → start drawing
+      isDrawing = true;
+      curveMode = 'freehand';
+      freehandCurve = [];
+      freehandCurve.push(fromPixel(domView, px, py));
+    }
+    // Also record pan state in case this becomes a pan gesture
+    touchState = {
+      mode: 'pan', canvas, view,
+      startX: t.clientX, startY: t.clientY,
+      cx: view.cx, cy: view.cy
+    };
+  }
+  else if (e.touches.length === 2) {
+    // Two fingers → pinch zoom
+    isDrawing = false;
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    touchState = {
+      mode: 'pinch', canvas, view,
+      dist: Math.sqrt(dx * dx + dy * dy),
+      range: view.range
+    };
+  }
+}
+
+function handleTouchMove(e, canvas, view) {
+  e.preventDefault();
+  if (!touchState) return;
+
+  if (touchState.mode === 'pan' && e.touches.length === 1) {
+    const t = e.touches[0];
+
+    if (isDrawing && canvas === dCan) {
+      // Continue drawing
+      const [px, py] = canvasXY(t, canvas);
+      const [re, im] = fromPixel(domView, px, py);
+      const last = freehandCurve[freehandCurve.length - 1];
+      const minD = domView.range * 2 / W * 2;
+      if ((re - last[0]) ** 2 + (im - last[1]) ** 2 > minD * minD) {
+        freehandCurve.push([re, im]);
+        render();
+      }
+    } else {
+      // Pan
+      const rect = canvas.getBoundingClientRect();
+      const scale = view.range * 2 / rect.width;
+      view.cx = touchState.cx - (t.clientX - touchState.startX) * scale;
+      view.cy = touchState.cy + (t.clientY - touchState.startY) * scale;
+      if (canvas === dCan) singDirty = true;
+      render();
+    }
+  }
+  else if (touchState.mode === 'pinch' && e.touches.length === 2) {
+    // Pinch zoom: scale range inversely with finger distance
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    view.range = Math.max(0.01, Math.min(100, touchState.range * touchState.dist / dist));
+    if (canvas === dCan) singDirty = true;
+    render();
+  }
+}
+
+function handleTouchEnd(e) {
+  if (isDrawing) {
+    isDrawing = false;
+    if (freehandCurve.length < 3) curveMode = 'circle';
+    render();
+  }
+  if (e.touches.length === 0) touchState = null;
+}
+
+// Register touch handlers on both canvases
+dCan.addEventListener('touchstart', e => handleTouchStart(e, dCan, domView), { passive: false });
+dCan.addEventListener('touchmove',  e => handleTouchMove(e, dCan, domView),  { passive: false });
+dCan.addEventListener('touchend',   handleTouchEnd, { passive: false });
+iCan.addEventListener('touchstart', e => handleTouchStart(e, iCan, imgView), { passive: false });
+iCan.addEventListener('touchmove',  e => handleTouchMove(e, iCan, imgView),  { passive: false });
+iCan.addEventListener('touchend',   handleTouchEnd, { passive: false });
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §11  UI CONTROLS                                         ║
+// ╚════════════════════════════════════════════════════════════╝
+
+// ── Radius slider ──
+// Controls the radius of the cursor-following circle.
+document.getElementById('slider_r').addEventListener('input', e => {
+  circleRadius = parseFloat(e.target.value);
+  document.getElementById('val_r').textContent = circleRadius.toFixed(2);
+  render();
+});
+
+/** stepRadius(delta) — increment/decrement the radius via ‹ › buttons. */
+function stepRadius(d) {
+  circleRadius = Math.max(0.05, Math.min(6, Math.round((circleRadius + d) * 100) / 100));
+  document.getElementById('slider_r').value = circleRadius;
+  document.getElementById('val_r').textContent = circleRadius.toFixed(2);
+  render();
+}
+
+/** resetViews() — snap both viewports back to the default range. */
+function resetViews() {
+  domView.cx = 0; domView.cy = 0; domView.range = 4.5;
+  imgView.cx = 0; imgView.cy = 0; imgView.range = 4.5;
+  singDirty = true;
+  render();
+}
+
+/** clearFreehand() — discard the drawn curve and return to circle mode. */
+function clearFreehand() {
+  curveMode = 'circle';
+  freehandCurve = [];
+  render();
+}
+
+// ── Responsive canvas sizing ──
+// The internal resolution stays at 480×480, but the CSS display size
+// adapts to the window width so both canvases fit side-by-side.
+function resize() {
+  const maxW = Math.min(480, (window.innerWidth - 60) / 2);
+  dCan.style.width  = maxW + 'px';
+  dCan.style.height = maxW + 'px';
+  iCan.style.width  = maxW + 'px';
+  iCan.style.height = maxW + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  §12  INITIALIZATION                                      ║
+// ╚════════════════════════════════════════════════════════════╝
+
+compileFunc();   // Parse the default expression from the input field
+render();        // Draw the initial state
+
+</script>
+</body>
+</html>
