@@ -35,6 +35,7 @@
     --green:  #2ee87a;  /* zeros */
     --red:    #ff3b5c;  /* poles */
     --yellow: #ffd639;  /* function text in input */
+    --purple: #a87bff;  /* critical points (zeros of f') */
   }
 
   body {
@@ -187,7 +188,7 @@
   <!-- 6. Status line -->
   <div class="status-display" id="statusDisplay"></div>
 
-  <!-- 7. Radius slider -->
+  <!-- 7. Radius + grid fineness sliders -->
   <div class="controls-row">
     <div class="coeff-control">
       <label style="color:var(--cyan)">r</label>
@@ -216,8 +217,19 @@
   <div class="legend">
     <span class="legend-item"><span class="legend-swatch" style="background:var(--cyan)"></span> Domain curve</span>
     <span class="legend-item"><span class="legend-swatch" style="background:var(--orange)"></span> Image curve</span>
-    <span class="legend-item"><span class="legend-dot" style="color:var(--green)">✕</span> Zeros</span>
-    <span class="legend-item"><span class="legend-dot" style="color:var(--red)">✕</span> Poles</span>
+    <span class="legend-item"><span class="legend-dot" style="color:var(--green)">✕</span> Zeros of f</span>
+    <span class="legend-item"><span class="legend-dot" style="color:var(--red)">✕</span> Poles of f</span>
+    <span class="legend-item"><span class="legend-dot" style="color:var(--purple)">◆</span> Zeros of f′</span>
+  </div>
+
+  <div class="controls-row">
+    <div class="coeff-control">
+        <label style="color:var(--text-dim); font-size:0.7em; min-width:28px;" title="Grid resolution for zero/pole detection">root/pole search res</label>
+        <button class="step-btn" onclick="stepGrid(-20)">‹</button>
+        <input type="range" id="slider_grid" min="40" max="600" step="10" value="300">
+        <button class="step-btn" onclick="stepGrid(20)">›</button>
+        <span class="val" id="val_grid">300</span>
+    </div>
   </div>
 
   <p class="instructions">
@@ -751,6 +763,31 @@ function evalF(z) {
   return evalAST(currentAST, z);
 }
 
+/**
+ * evalFPrime(z) — numerical derivative of f at z.
+ *
+ * Uses central differences: f'(z) ≈ (f(z+h) − f(z−h)) / (2h)
+ * for better accuracy than forward differences.
+ */
+const DERIV_H = 1e-7;
+function evalFPrime(z) {
+  const fPlus  = evalF([z[0] + DERIV_H, z[1]]);
+  const fMinus = evalF([z[0] - DERIV_H, z[1]]);
+  const dfdx   = cscale(1 / (2 * DERIV_H), csub(fPlus, fMinus));
+
+  const fPlusI  = evalF([z[0], z[1] + DERIV_H]);
+  const fMinusI = evalF([z[0], z[1] - DERIV_H]);
+  const dfdy    = cscale(1 / (2 * DERIV_H), csub(fPlusI, fMinusI));
+
+  // For holomorphic f, f'(z) = ∂f/∂x = −i ∂f/∂y.
+  // We use ∂f/∂x as our estimate (the Cauchy–Riemann equations
+  // guarantee it equals −i ∂f/∂y for holomorphic functions).
+  return dfdx;
+}
+
+/** Grid resolution for the zero/pole/critical-point scan. Default 120. */
+let gridN = 300;
+
 
 // ╔════════════════════════════════════════════════════════════╗
 // ║  §5  NUMERICAL ZERO / POLE FINDER                         ║
@@ -772,28 +809,35 @@ function evalF(z) {
 // ╚════════════════════════════════════════════════════════════╝
 
 /**
- * findSingularities() → { zeros: [[re,im],...], poles: [[re,im],...] }
+ * findSingularities() → { zeros, poles, critical }
  *
- * Scans the current domain viewport for zeros and poles of f.
+ * Scans the current domain viewport for:
+ *   - zeros of f     (where |f| is small)
+ *   - poles of f     (where |1/f| is small)
+ *   - critical points (zeros of f', where |f'| is small)
+ *
  * Called lazily (only when singDirty is true) and cached.
+ * Uses gridN (adjustable via the "grid" slider) for the scan resolution.
  */
 function findSingularities() {
-  if (!currentAST) return { zeros: [], poles: [] };
+  if (!currentAST) return { zeros: [], poles: [], critical: [] };
 
   // Scan region: slightly larger than visible viewport
   const R    = domView.range * 1.2;
-  const N    = 80;               // grid resolution (N×N)
+  const N    = gridN;            // grid resolution (N×N), user-adjustable
   const step = 2 * R / N;       // spacing between grid points
   const cx   = domView.cx;
   const cy   = domView.cy;
 
-  // ── Step 1: evaluate |f| and |1/f| on the grid ──
-  const fMag   = [];  // fMag[i][j]   = |f(z_ij)|
-  const invMag = [];  // invMag[i][j] = 1/|f(z_ij)|  (= |1/f(z_ij)|)
+  // ── Step 1: evaluate |f|, |1/f|, and |f'| on the grid ──
+  const fMag    = [];  // fMag[i][j]    = |f(z_ij)|
+  const invMag  = [];  // invMag[i][j]  = 1/|f(z_ij)|
+  const fpMag   = [];  // fpMag[i][j]   = |f'(z_ij)|
 
   for (let i = 0; i <= N; i++) {
     fMag[i] = [];
     invMag[i] = [];
+    fpMag[i] = [];
     for (let j = 0; j <= N; j++) {
       const re = cx - R + i * step;
       const im = cy - R + j * step;
@@ -810,6 +854,13 @@ function findSingularities() {
       } catch {
         fMag[i][j] = 1e15;
         invMag[i][j] = 0;
+      }
+      try {
+        const wp = evalFPrime([re, im]);
+        const mp = cabs(wp);
+        fpMag[i][j] = isFinite(mp) ? mp : 1e15;
+      } catch {
+        fpMag[i][j] = 1e15;
       }
     }
   }
@@ -852,6 +903,9 @@ function findSingularities() {
   // Poles: local minima of |1/f| below 0.15 (i.e. |f| > ~7)
   const rawPoles = gridMinima(invMag, 0.15);
 
+  // Critical points: local minima of |f'| below 0.4
+  const rawCritical = gridMinima(fpMag, 0.4);
+
   // ── Step 3+4: cluster nearby candidates, then refine with Newton ──
 
   const zeros = [];
@@ -878,7 +932,22 @@ function findSingularities() {
     }
   }
 
-  return { zeros, poles };
+  // Critical points: Newton on f'(z) = 0
+  const critical = [];
+  for (const c0 of cluster(rawCritical, step * 2)) {
+    const c = newtonDeriv(c0);
+    if (c) {
+      // Exclude points that coincide with zeros or poles of f
+      // (they often appear as artifacts)
+      const isZeroOrPole = zeros.some(q => cabs(csub(q, c)) < 0.08)
+                        || poles.some(q => cabs(csub(q, c)) < 0.08);
+      if (!isZeroOrPole && !critical.some(q => cabs(csub(q, c)) < 0.05)) {
+        critical.push(c);
+      }
+    }
+  }
+
+  return { zeros, poles, critical };
 }
 
 
@@ -969,6 +1038,43 @@ function newton(z0, pole) {
     gz = pole ? cdiv([1, 0], evalF(z)) : evalF(z);
   } catch { return null; }
   return cabs(gz) < 0.1 ? z : null;
+}
+
+
+/**
+ * newtonDeriv(z0) → [re, im] or null
+ *
+ * Newton's method to find a zero of f'(z) near z0 (a critical point).
+ *
+ * Uses a second finite-difference to approximate f''(z) for the
+ * Newton step: z ← z − f'(z)/f''(z).
+ *
+ * f''(z) is approximated as (f'(z+h) − f'(z)) / h.
+ */
+function newtonDeriv(z0) {
+  let z = [...z0];
+  const h = 1e-7;
+
+  for (let k = 0; k < 30; k++) {
+    let fp;
+    try { fp = evalFPrime(z); } catch { return null; }
+    if (!isFinite(fp[0]) || !isFinite(fp[1])) return null;
+    if (cabs(fp) < 1e-12) return z;  // converged
+
+    // Approximate f''(z) via forward difference of f'
+    let fph;
+    try { fph = evalFPrime([z[0] + h, z[1]]); } catch { return null; }
+    const fpp = cscale(1 / h, csub(fph, fp));
+    if (cabs(fpp) < 1e-15) return null;
+
+    z = csub(z, cdiv(fp, fpp));
+    if (!isFinite(z[0]) || !isFinite(z[1])) return null;
+    if (Math.abs(z[0]) > 50 || Math.abs(z[1]) > 50) return null;
+  }
+
+  let fp;
+  try { fp = evalFPrime(z); } catch { return null; }
+  return cabs(fp) < 0.1 ? z : null;
 }
 
 
@@ -1233,6 +1339,30 @@ function drawCross(ctx, v, re, im, color, sz) {
 
 
 /**
+ * drawDiamond(ctx, view, re, im, color, size)
+ *
+ * Draws a ◆ diamond marker at a complex point. Used to mark
+ * critical points (zeros of f') on the domain canvas.
+ */
+function drawDiamond(ctx, v, re, im, color, sz) {
+  sz = sz || 5;
+  const [px, py] = toPixel(v, re, im);
+
+  // Skip if off-screen
+  if (px < -20 || px > W + 20 || py < -20 || py > H + 20) return;
+
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(px, py - sz);      // top
+  ctx.lineTo(px + sz, py);      // right
+  ctx.lineTo(px, py + sz);      // bottom
+  ctx.lineTo(px - sz, py);      // left
+  ctx.closePath();
+  ctx.fill();
+}
+
+
+/**
  * drawClosedCurve(ctx, view, curve, color, lineWidth)
  *
  * Strokes a closed polyline through the given complex points.
@@ -1340,11 +1470,12 @@ function render() {
     cachedSing = findSingularities();
     singDirty = false;
   }
-  const { zeros, poles } = cachedSing;
+  const { zeros, poles, critical } = cachedSing;
 
-  // ── Draw zeros (green ×) and poles (red ×) on domain canvas ──
-  for (const z of zeros) drawCross(dCtx, domView, z[0], z[1], '#2ee87a', 8);
-  for (const p of poles) drawCross(dCtx, domView, p[0], p[1], '#ff3b5c', 8);
+  // ── Draw zeros (green ×), poles (red ×), and critical points (purple ◆) ──
+  for (const z of zeros)    drawCross(dCtx, domView, z[0], z[1], '#2ee87a', 4);
+  for (const p of poles)    drawCross(dCtx, domView, p[0], p[1], '#ff3b5c', 4);
+  for (const c of critical) drawDiamond(dCtx, domView, c[0], c[1], '#a87bff', 4);
 
   // ── Determine the active domain curve ──
   let curve;
@@ -1776,6 +1907,25 @@ function stepRadius(d) {
   circleRadius = Math.max(0.05, Math.min(6, Math.round((circleRadius + d) * 100) / 100));
   document.getElementById('slider_r').value = circleRadius;
   document.getElementById('val_r').textContent = circleRadius.toFixed(2);
+  render();
+}
+
+// ── Grid fineness slider ──
+// Controls the N×N resolution of the zero/pole/critical-point grid scan.
+// Higher values find more roots but take longer.
+document.getElementById('slider_grid').addEventListener('input', e => {
+  gridN = parseInt(e.target.value);
+  document.getElementById('val_grid').textContent = gridN;
+  singDirty = true;
+  render();
+});
+
+/** stepGrid(delta) — increment/decrement grid fineness via ‹ › buttons. */
+function stepGrid(d) {
+  gridN = Math.max(40, Math.min(600, gridN + d));
+  document.getElementById('slider_grid').value = gridN;
+  document.getElementById('val_grid').textContent = gridN;
+  singDirty = true;
   render();
 }
 
