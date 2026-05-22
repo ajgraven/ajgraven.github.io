@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>QD Solver — Backend Tests</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 1000px; margin: 30px auto; padding: 0 20px; }
+    h1 { font-size: 20px; }
+    .test { padding: 8px 12px; margin: 4px 0; border-radius: 4px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; white-space: pre-wrap; }
+    .pass { background: #e6f7e6; border-left: 4px solid #2a8f2a; }
+    .fail { background: #fbeaea; border-left: 4px solid #b53030; }
+    .info { background: #eef2f7; border-left: 4px solid #5677a8; }
+    #summary { font-weight: bold; font-size: 16px; margin: 20px 0; }
+    canvas { border: 1px solid #ccc; margin: 10px 5px; background: #fff; }
+  </style>
+</head>
+<body>
+  <h1>Quadrature Domain Solver — Backend Tests</h1>
+  <div id="summary"></div>
+  <div id="results"></div>
+  <h2>Quick visualizations</h2>
+  <div id="plots"></div>
+
+<script src="complex.js"></script>
+<script src="taylor.js"></script>
+<script src="solver.js"></script>
+<script>
+'use strict';
+
+const results = document.getElementById('results');
+let passCount = 0, failCount = 0;
+
+function log(html, cls = 'info') {
+  const d = document.createElement('div');
+  d.className = 'test ' + cls;
+  d.innerHTML = html;
+  results.appendChild(d);
+}
+function check(name, cond, detail = '') {
+  if (cond) { passCount++; log('PASS  ' + name + (detail ? '  — ' + detail : ''), 'pass'); }
+  else      { failCount++; log('FAIL  ' + name + (detail ? '  — ' + detail : ''), 'fail'); }
+}
+function approxEq(a, b, tol = 1e-8) {
+  if (typeof a === 'number') return Math.abs(a - b) < tol;
+  return Math.abs(a.re - b.re) < tol && Math.abs(a.im - b.im) < tol;
+}
+
+const C = Complex;
+const T = Taylor;
+
+// --- Complex parsing ---
+log('--- Complex parsing/formatting ---', 'info');
+check('parse "1+2i"',  approxEq(C.parse('1+2i'),  {re:1, im:2}));
+check('parse "1-2i"',  approxEq(C.parse('1-2i'),  {re:1, im:-2}));
+check('parse "3"',     approxEq(C.parse('3'),     {re:3, im:0}));
+check('parse "2i"',    approxEq(C.parse('2i'),    {re:0, im:2}));
+check('parse "-i"',    approxEq(C.parse('-i'),    {re:0, im:-1}));
+check('parse "1.5e-3+2.1e2i"', approxEq(C.parse('1.5e-3+2.1e2i'), {re:0.0015, im:210}));
+check('parse "-1.5-2.5i"', approxEq(C.parse('-1.5-2.5i'), {re:-1.5, im:-2.5}));
+
+// --- Taylor inversion ---
+log('--- Taylor compositional inverse ---', 'info');
+// p(t) = t (identity). q = p inverse = t.
+{
+  const p = [{re:0,im:0},{re:1,im:0},{re:0,im:0},{re:0,im:0}];
+  const q = T.invert(p, 3);
+  check('inv(identity)[1] = 1', approxEq(q[1], {re:1,im:0}));
+  check('inv(identity)[2] = 0', approxEq(q[2], {re:0,im:0}));
+}
+// p(t) = 2t + 3t^2. q[1] = 1/2, q[2] = -3*(1/2)^3 = -3/8. Numerically: invert.
+{
+  const p = [{re:0,im:0},{re:2,im:0},{re:3,im:0},{re:0,im:0},{re:0,im:0}];
+  const q = T.invert(p, 4);
+  // Check by composition: p(q(t)) should equal t up to order L.
+  // Substitute q into p and check.
+  // We'll compute p(q) = c1 q + c2 q^2 + ... and check coefficients.
+  let comp = T.zero(5);
+  let qPow = q.slice(0);
+  for (let k = 1; k <= 4; k++) {
+    if (k > 1) qPow = T.mul(qPow, q, 4);
+    for (let i = 0; i <= 4; i++) comp[i] = C.add(comp[i], C.mul(p[k] || {re:0,im:0}, qPow[i]));
+  }
+  check('p(q)[0] = 0', approxEq(comp[0], {re:0,im:0}, 1e-10));
+  check('p(q)[1] = 1', approxEq(comp[1], {re:1,im:0}, 1e-10));
+  check('p(q)[2] = 0', approxEq(comp[2], {re:0,im:0}, 1e-10));
+  check('p(q)[3] = 0', approxEq(comp[3], {re:0,im:0}, 1e-10));
+  check('p(q)[4] = 0', approxEq(comp[4], {re:0,im:0}, 1e-10));
+}
+
+// --- Phi evaluation: disk case ---
+log('--- Phi evaluation (disk D_R(c)) ---', 'info');
+{
+  // For the disk D_R(c) in QD(R^2/(w-c)):
+  //   φ(z) = c + R z = w_0 + R · z/(1 - 0·z)
+  // So our parametrization has: w_0 = c, single branch with z_1 = 0, A_{1,1} = R.
+  const R = 1.7, c = {re: 0.5, im: -0.3};
+  const phi = {
+    w0: c,
+    branches: [{ z: {re:0, im:0}, A: [{re:R, im:0}] }]
+  };
+  const z = {re: 0.5, im: 0.3};
+  const phi_z = QD.evalPhi(z, phi);
+  // Expect c + R z
+  const expected = C.add(c, C.scale(z, R));
+  check('φ(z) = c + R z at interior', approxEq(phi_z, expected, 1e-12));
+
+  // Boundary: |φ(e^{iθ}) - c| = R for all θ
+  for (let i = 0; i < 8; i++) {
+    const th = i * Math.PI / 4;
+    const e = {re: Math.cos(th), im: Math.sin(th)};
+    const w = QD.evalPhi(e, phi);
+    check('|φ(e^{iθ}) - c| = R at θ=' + (i * 45) + '°',
+      approxEq(C.abs(C.sub(w, c)), R, 1e-10));
+  }
+}
+
+// --- Phi Taylor expansion ---
+log('--- Phi Taylor expansion ---', 'info');
+{
+  // For φ(z) = w_0 + A z/(1 - z_j z), the Taylor at any z_0 should be:
+  //   φ(z_0) + A/(1-z_j z_0)^2 · (z-z_0) + A z_j/(1-z_j z_0)^3 · (z-z_0)^2 + ...
+  const phi = {
+    w0: {re: 0, im: 0},
+    branches: [{ z: {re: 0.3, im: 0.2}, A: [{re: 1, im: 0}] }]
+  };
+  const z0 = {re: 0.1, im: 0.15};
+  const L = 4;
+  const T_arr = QD.phiTaylorAt(z0, phi, L);
+  // Check by directly evaluating φ at z0 ± h for small h and comparing.
+  const eps = 1e-5;
+  const dirs = [{re:1, im:0}, {re:0, im:1}];
+  for (const d of dirs) {
+    const zp = C.add(z0, C.scale(d, eps));
+    const zm = C.sub(z0, C.scale(d, eps));
+    const fp = QD.evalPhi(zp, phi);
+    const fm = QD.evalPhi(zm, phi);
+    // (f(z0+εd) - f(z0-εd)) / (2ε) should equal d · T_arr[1] (the directional derivative,
+    // recalling T_arr[1] is the complex 1st-order coefficient).
+    const numerDeriv = C.scale(C.sub(fp, fm), 1 / (2 * eps));
+    const analyticDeriv = C.mul(d, T_arr[1]);
+    check('Taylor[1] matches numerical derivative (dir=' + (d.re ? 'real' : 'imag') + ')',
+      approxEq(numerDeriv, analyticDeriv, 1e-6));
+  }
+}
+
+// --- Faber transform target: disk consistency ---
+log('--- Faber transform self-consistency (disk) ---', 'info');
+{
+  // For the disk solution above, target A_{1,1} should equal R = A_{1,1}.
+  const R = 1.7;
+  const phi = {
+    w0: {re: 0.5, im: -0.3},
+    branches: [{ z: {re:0, im:0}, A: [{re:R, im:0}] }]
+  };
+  const hData = {
+    poles: [{ a: {re: 0.5, im: -0.3}, principal: [{re: R*R, im: 0}] }]
+  };
+  const target = QD.computeTargetA(phi, hData);
+  check('Disk target A_{1,1} = R', approxEq(target[0][0], {re:R, im:0}, 1e-10));
+  const res = QD.residual(phi, hData);
+  const rn = QD.residualNorm(res);
+  check('Disk residual = 0', rn < 1e-10, 'norm = ' + rn.toExponential(3));
+}
+
+// --- Solve the disk case via Newton ---
+log('--- Newton solve: disk ---', 'info');
+{
+  const R = 1.4;
+  const hData = {
+    poles: [{ a: {re: 0, im: 0}, principal: [{re: R*R, im: 0}] }]
+  };
+  const result = QD.solveInverseQD(hData);
+  check('disk: solve succeeded', result.success, result.success ? '' : (result.error || ''));
+  if (result.success) {
+    const phi = result.primary.phi;
+    check('disk: branch z = 0', approxEq(phi.branches[0].z, {re:0, im:0}, 1e-5));
+    check('disk: A_{1,1} ≈ R', approxEq(phi.branches[0].A[0], {re:R, im:0}, 1e-5));
+    check('disk: univalent', result.primary.univalent === true);
+    log('disk: iterations = ' + result.primary.iterations + ', residual = ' + result.primary.residual.toExponential(3), 'info');
+  }
+}
+
+// --- Two-point QD (Aharonov-Shapiro family) ---
+log('--- Newton solve: 2-point QD ---', 'info');
+{
+  // h(w) = c1/(w - a1) + c2/(w - a2) — a generic two-point quadrature.
+  // We pick small residues and well-separated poles so a simply connected
+  // bounded QD certainly exists.
+  const hData = {
+    poles: [
+      { a: {re: -0.5, im: 0}, principal: [{re: 1.0, im: 0}] },
+      { a: {re:  0.5, im: 0}, principal: [{re: 1.0, im: 0}] },
+    ]
+  };
+  const result = QD.solveInverseQD(hData);
+  check('2-pt: solve succeeded', result.success, result.success ? '' : (result.error || ''));
+  if (result.success) {
+    log('2-pt: iterations=' + result.primary.iterations + ', residual=' + result.primary.residual.toExponential(3) +
+        ', univalent=' + result.primary.univalent + ', alternates=' + result.alternates.length, 'info');
+    plotDomain('2-point QD: h = 1/(w+0.5) + 1/(w-0.5)', result.primary.phi, hData);
+  }
+}
+
+// --- One-point with double pole (cardioid-like) ---
+log('--- Newton solve: order-2 quadrature ---', 'info');
+{
+  // h(w) = C_2 / (w - 0)^2 alone (no first-order part) corresponds to a known
+  // family (a cardioid is QD with h = c/(w-a)^2 type for certain parameters).
+  // We use mixed orders to exercise the higher-order code path.
+  const hData = {
+    poles: [
+      { a: {re: 0, im: 0}, principal: [{re: 0.5, im: 0}, {re: 0.2, im: 0}] },
+    ]
+  };
+  const result = QD.solveInverseQD(hData);
+  check('order-2: solve succeeded', result.success, result.success ? '' : (result.error || ''));
+  if (result.success) {
+    log('order-2: iterations=' + result.primary.iterations + ', residual=' + result.primary.residual.toExponential(3) +
+        ', univalent=' + result.primary.univalent, 'info');
+    plotDomain('Order-2 quadrature: h = 0.5/w + 0.2/w²', result.primary.phi, hData);
+  }
+}
+
+// --- Asymmetric 3-point ---
+log('--- Newton solve: 3-point asymmetric ---', 'info');
+{
+  const hData = {
+    poles: [
+      { a: {re:  0.4, im:  0.5}, principal: [{re: 0.5, im: 0}] },
+      { a: {re: -0.6, im:  0.1}, principal: [{re: 0.4, im: 0.2}] },
+      { a: {re:  0.0, im: -0.7}, principal: [{re: 0.6, im: -0.1}] },
+    ]
+  };
+  const result = QD.solveInverseQD(hData);
+  check('3-pt: solve succeeded', result.success, result.success ? '' : (result.error || ''));
+  if (result.success) {
+    log('3-pt: iterations=' + result.primary.iterations + ', residual=' + result.primary.residual.toExponential(3) +
+        ', univalent=' + result.primary.univalent + ', alternates=' + result.alternates.length, 'info');
+    plotDomain('3-point asymmetric QD', result.primary.phi, hData);
+  }
+}
+
+// --- Render summary ---
+const sum = document.getElementById('summary');
+sum.textContent = `Tests passed: ${passCount} / ${passCount + failCount}`;
+sum.style.color = failCount === 0 ? '#2a8f2a' : '#b53030';
+
+// --------- Plotting helpers (mini, just for tests) -----------------------
+function plotDomain(title, phi, hData) {
+  const w = 350, h = 350;
+  const wrap = document.createElement('div');
+  wrap.style.display = 'inline-block';
+  wrap.style.margin = '10px';
+  wrap.style.verticalAlign = 'top';
+  const cap = document.createElement('div');
+  cap.textContent = title;
+  cap.style.fontFamily = 'system-ui';
+  cap.style.fontSize = '13px';
+  cap.style.maxWidth = w + 'px';
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  wrap.appendChild(cap); wrap.appendChild(canvas);
+  document.getElementById('plots').appendChild(wrap);
+
+  const pts = QD.sampleBoundaryAdaptive(phi, 400, 800);
+
+  // Compute extents
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p.w.re < minX) minX = p.w.re; if (p.w.re > maxX) maxX = p.w.re;
+    if (p.w.im < minY) minY = p.w.im; if (p.w.im > maxY) maxY = p.w.im;
+  }
+  for (const pl of hData.poles) {
+    if (pl.a.re < minX) minX = pl.a.re; if (pl.a.re > maxX) maxX = pl.a.re;
+    if (pl.a.im < minY) minY = pl.a.im; if (pl.a.im > maxY) maxY = pl.a.im;
+  }
+  const pad = 0.15 * Math.max(maxX - minX, maxY - minY, 0.1);
+  minX -= pad; maxX += pad; minY -= pad; maxY += pad;
+  // Make square aspect
+  const dx = maxX - minX, dy = maxY - minY;
+  if (dx > dy) { const m = (minY+maxY)/2; minY = m - dx/2; maxY = m + dx/2; }
+  else        { const m = (minX+maxX)/2; minX = m - dy/2; maxX = m + dy/2; }
+
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h);
+  const toX = re => (re - minX) / (maxX - minX) * w;
+  const toY = im => h - (im - minY) / (maxY - minY) * h;
+
+  // Axes
+  ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(toX(minX), toY(0)); ctx.lineTo(toX(maxX), toY(0)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(toX(0), toY(minY)); ctx.lineTo(toX(0), toY(maxY)); ctx.stroke();
+
+  // Boundary filled
+  ctx.beginPath();
+  ctx.moveTo(toX(pts[0].w.re), toY(pts[0].w.im));
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(toX(pts[i].w.re), toY(pts[i].w.im));
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(86, 119, 168, 0.18)';
+  ctx.fill();
+  ctx.strokeStyle = '#1a3e7a';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Quadrature nodes
+  for (const pl of hData.poles) {
+    ctx.beginPath();
+    ctx.arc(toX(pl.a.re), toY(pl.a.im), 4, 0, 2*Math.PI);
+    ctx.fillStyle = '#b53030';
+    ctx.fill();
+  }
+}
+</script>
+</body>
+</html>

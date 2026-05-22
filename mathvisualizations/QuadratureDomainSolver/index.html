@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Quadrature Domain Solver</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- math.js for any user-facing complex arithmetic needs in the future -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.1/math.js"></script>
+  <!-- KaTeX for typeset math in the Riemann-map card -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
+        integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+"
+        crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+          integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg"
+          crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============== LEFT: CONTROLS ============== -->
+  <aside id="controls">
+    <h1>Quadrature Domain Solver</h1>
+
+    <!-- Tab bar: switches between the classical/LQD solver (Tab 1) and the
+         algebraic-weighted solver (Tab 2). Tab panels are siblings below. -->
+    <div id="tab-bar" role="tablist">
+      <button class="tab-btn active" data-tab="qd"  role="tab" aria-selected="true">QD / LQD</button>
+      <button class="tab-btn"        data-tab="aqd" role="tab" aria-selected="false">AQD</button>
+    </div>
+
+    <!-- ============== TAB 1: QD / LQD (existing UI) ============== -->
+    <div id="controls-qd" class="tab-panel active" role="tabpanel">
+
+    <section class="card">
+      <h2>Domain type</h2>
+
+      <div class="domain-mode-group">
+        <div class="domain-mode-group-label">Classical QD</div>
+        <div class="row">
+          <label><input type="radio" name="domain-mode" value="bounded" checked> Bounded</label>
+          <label style="margin-left:14px;"><input type="radio" name="domain-mode" value="unbounded"> Unbounded</label>
+        </div>
+      </div>
+
+      <div class="domain-mode-group">
+        <div class="domain-mode-group-label">Log-weighted QD (LQD)</div>
+        <div class="row">
+          <label><input type="radio" name="domain-mode" value="lqd-bounded"> Bounded</label>
+          <label style="margin-left:14px;"><input type="radio" name="domain-mode" value="lqd-bounded-singular"> Bounded singular</label>
+        </div>
+        <div class="row">
+          <label><input type="radio" name="domain-mode" value="lqd-unbounded"> Unbounded</label>
+          <label style="margin-left:14px;"><input type="radio" name="domain-mode" value="lqd-unbounded-singular"> Unbounded singular</label>
+        </div>
+      </div>
+      <div class="hint" id="lqd-hint" style="display:none; margin-top:6px;">
+        Log-weighted QD: <code>∫<sub>Ω</sub> f(w)/|w|² dA = ∮<sub>∂Ω</sub> f·h dw</code>.
+        Non-singular only: requires <code>0 ∉ Ω̄</code>, so <code>w₀ = φ(0)</code> must be nonzero.
+      </div>
+      <div class="hint" id="lqd-singular-hint" style="display:none; margin-top:6px;">
+        Singular log-weighted QD: <code>0 ∈ Ω</code>; test functions
+        <code>f ∈ L¹<sub>a</sub>(Ω; ρ₀)</code> automatically vanish at 0. Riemann map
+        factors as <code>φ(z) = γ · b<sub>z₀</sub>(z) · exp(r#(z))</code>. The pole of
+        <code>h</code> at the origin contributes residue <code>q</code> (complex);
+        <code>q = 0</code> is the degenerate case with no log-charge.
+      </div>
+      <div class="hint" id="lqd-unbounded-hint" style="display:none; margin-top:6px;">
+        Unbounded non-singular log-weighted QD: <code>0 ∉ Ω̄</code>, <code>∞ ∈ Ω</code>;
+        test functions <code>f ∈ L¹<sub>a</sub>(Ω; ρ₀)</code> vanish at <code>∞</code>.
+        Riemann map: <code>φ(z) = c·z · exp(r#(z) − r#(∞))</code> on <code>𝔻*</code>,
+        with conformal radius <code>c = φ′(∞)</code>. The <code>− r#(∞)</code>
+        subtraction pins the leading coefficient at ∞ to exactly <code>c</code>.
+      </div>
+      <div class="hint" id="lqd-unbounded-singular-hint" style="display:none; margin-top:6px;">
+        Unbounded singular log-weighted QD: <code>0 ∈ Ω</code> AND <code>∞ ∈ Ω</code>;
+        test functions <code>f</code> vanish at BOTH 0 and ∞ (e.g.
+        <code>w/(w−b)<sup>k</sup></code> for <code>k ≥ 2</code>, <code>b ∈ K</code>).
+        Riemann map: <code>φ(z) = c·|z₀|·z·b<sub>z₀</sub>(z) · exp(r#(z) − r#(∞))</code>
+        with <code>z₀ ∈ 𝔻*</code> the preimage of 0, and <code>q</code> (complex)
+        the residue of <code>h</code> at the origin. <code>q = 0</code> is the
+        degenerate case with no log-charge.
+      </div>
+    </section>
+
+    <!-- Singular-LQD charge q. Visible only in lqd-bounded-singular mode. -->
+    <section class="card hidden" id="q-card">
+      <h2>Residue q at origin</h2>
+      <div class="hint">
+        Complex residue of <code>h</code> at the simple pole at <code>w = 0</code>
+        (the singular pole inside Ω). Dial via text or the |q| / arg(q) sliders.
+      </div>
+      <div class="row">
+        <label>q =
+          <input type="text" class="cnum" id="q-manual" value="0">
+        </label>
+      </div>
+      <div class="slider1d-row" style="margin-left: 0;">
+        <label>|q|</label>
+        <input type="range" id="q-mag-slider" class="slider1d"
+               min="0" max="3" step="any" value="0">
+        <span class="slider1d-val" id="q-mag-val">0.000</span>
+      </div>
+      <div class="slider1d-row" style="margin-left: 0;">
+        <label>arg</label>
+        <input type="range" id="q-arg-slider" class="slider1d"
+               min="-3.14159265" max="3.14159265" step="any" value="0">
+        <span class="slider1d-val" id="q-arg-val">0.000π</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Quadrature function h(w)</h2>
+      <div class="hint">
+        h(w) = Σ<sub>j</sub> Σ<sub>s=1..m<sub>j</sub></sub> C<sub>j,s</sub> / (w − a<sub>j</sub>)<sup>s</sup>.
+        Enter complex values as e.g. <code>1+2i</code>.
+      </div>
+      <div class="row" style="margin-bottom: 8px;">
+        <label>Preset:
+          <select id="preset-select" style="width: 240px;"></select>
+        </label>
+      </div>
+      <div id="poles-list"></div>
+      <button id="add-pole" class="small">+ Add pole</button>
+
+      <!-- Polynomial part of h (unbounded mode only). -->
+      <div id="poly-part-section" class="hidden" style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #d8dbe0;">
+        <div class="hint">
+          Polynomial part of h(w) = Σ<sub>l=0..m<sub>∞</sub></sub> C<sub>∞,l</sub> w<sup>l</sup>.
+          Quadrature nodes at infinity.
+        </div>
+        <div class="row">
+          <label>Degree m<sub>∞</sub>:
+            <input type="number" id="poly-degree" min="-1" max="6" value="-1" style="width: 56px;">
+          </label>
+          <span style="font-size: 11px; color: #777;">(−1 = no polynomial part)</span>
+        </div>
+        <div id="poly-coefs-list"></div>
+      </div>
+    </section>
+
+    <!-- Card #2A: bounded normalization (φ(0)) -->
+    <section class="card" id="w0-card">
+      <h2>Riemann map center φ(0)</h2>
+      <div class="row">
+        <label><input type="radio" name="w0mode" value="auto" checked> Centroid of poles</label>
+      </div>
+      <div class="row">
+        <label>
+          <input type="radio" name="w0mode" value="manual"> Manual:
+          <input type="text" class="cnum" id="w0-manual" value="0" disabled>
+        </label>
+      </div>
+    </section>
+
+    <!-- Card #2B: unbounded normalization (conformal radius c) -->
+    <section class="card hidden" id="c-card">
+      <h2>Conformal radius c = φ&prime;(∞)</h2>
+      <div class="hint">
+        Unbounded QDs come in a one-parameter family. Sweep this slider to
+        explore it; past the critical c the simply-connected QD ceases to
+        exist (the solver will flag this).
+      </div>
+      <div class="slider1d-row" style="margin-left: 0;">
+        <label>c</label>
+        <input type="range" id="c-slider" class="slider1d"
+               min="0.05" max="3" step="any" value="0.5">
+        <span class="slider1d-val" id="c-val">0.500</span>
+      </div>
+      <div class="row" style="font-size: 11px; color: #777;">
+        Text:
+        <input type="number" id="c-manual" min="0.01" max="100" step="0.01" value="0.5" style="width: 78px;">
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Solver settings</h2>
+      <div class="row">
+        <label>Boundary samples:
+          <input type="number" id="samples" min="50" max="5000" step="50" value="500" style="width: 80px;">
+        </label>
+      </div>
+      <div class="row">
+        <label>Aggressiveness:
+          <select id="aggressiveness">
+            <option value="quick">Quick</option>
+            <option value="standard" selected>Standard</option>
+            <option value="thorough">Thorough</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="auto-fit"> Auto-fit view on solve</label>
+      </div>
+      <div class="row">
+        <label>Vector field:
+          <select id="vector-field-mode">
+            <option value="off" selected>Off</option>
+            <option value="polya">Pólya field   h̄(w)</option>
+            <option value="external" id="vf-external-opt">External field   w − h̄(w)</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <!-- ============== Search options (advanced) ============== -->
+    <!-- Collapsed by default. Any blank field falls back to the preset. -->
+    <section class="card" id="search-options-card">
+      <details>
+        <summary style="cursor: pointer; user-select: none;">
+          <h2 style="display:inline; font-size:inherit; text-transform:inherit; letter-spacing:inherit;">
+            Search options (advanced)
+          </h2>
+        </summary>
+
+        <div class="hint" style="margin-top: 8px;">
+          Overrides for the aggressiveness preset. Leave a field blank to use
+          the preset's default. Phase checkboxes are enabled by default.
+        </div>
+
+        <!-- A. Phases -->
+        <div class="search-opt-group">
+          <div class="search-opt-group-title">Phases</div>
+          <div class="row"><label><input type="checkbox" id="so-phase-direct"        checked> Direct algebraic (A1)</label></div>
+          <div class="row"><label><input type="checkbox" id="so-phase-continuation"  checked> Continuation in t (A2)</label></div>
+          <div class="row"><label><input type="checkbox" id="so-phase-multistart"    checked> Multistart, perturbed (A3)</label></div>
+          <div class="row"><label><input type="checkbox" id="so-phase-diverse"       checked> Diverse seeds, log-uniform (A4)</label></div>
+          <div class="row"><label><input type="checkbox" id="so-phase-deflation"     checked> Deflation, Brown-Gearhart (A5)</label></div>
+        </div>
+
+        <!-- B. Multistart budget -->
+        <div class="search-opt-group">
+          <div class="search-opt-group-title">Multistart budget</div>
+          <div class="row"><label>numRestarts <input type="number" id="so-num-restarts"   min="0"  step="1"   placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Diverse seeds <input type="number" id="so-num-diverse"  min="0"  step="1"   placeholder="auto"   class="so-num"></label></div>
+          <div class="row"><label>Deflation seeds <input type="number" id="so-num-deflation" min="0" step="1" placeholder="auto"   class="so-num"></label></div>
+          <div class="row"><label>Bg alt chunks <input type="number" id="so-bg-chunks"   min="0"  step="1"   placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Bg alt chunk size <input type="number" id="so-bg-chunk-size" min="1" step="1" placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label><input type="checkbox" id="so-keep-searching"> Keep searching (no chunk cap)</label></div>
+        </div>
+
+        <!-- C. Newton & continuation -->
+        <div class="search-opt-group">
+          <div class="search-opt-group-title">Newton &amp; continuation</div>
+          <div class="row"><label>Newton maxIter <input type="number" id="so-newton-maxiter" min="1" step="1" placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Newton tol <input type="text"   id="so-newton-tol"    placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Cont. tStart <input type="text" id="so-cont-tstart"   placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Cont. growFactor <input type="text" id="so-cont-grow" placeholder="preset" class="so-num"></label></div>
+        </div>
+
+        <!-- D. Deflation -->
+        <div class="search-opt-group">
+          <div class="search-opt-group-title">Deflation</div>
+          <div class="row"><label>α (strength) <input type="number" id="so-defl-alpha" step="0.1" placeholder="1"   class="so-num"></label></div>
+          <div class="row"><label>p (exponent) <input type="number" id="so-defl-p"     step="0.5" placeholder="2"   class="so-num"></label></div>
+          <div class="row"><label><input type="checkbox" id="so-defl-from-valid"> Also deflate from valid solutions</label></div>
+        </div>
+
+        <!-- E. Acceptance -->
+        <div class="search-opt-group">
+          <div class="search-opt-group-title">Acceptance</div>
+          <div class="row"><label>Univalence samples <input type="number" id="so-uni-samples" min="50" step="50" placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Identity tol <input type="text" id="so-id-tol" placeholder="1e-6" class="so-num"></label></div>
+          <div class="row"><label><input type="checkbox" id="so-show-non-univalent"> Show non-univalent candidates</label></div>
+          <div class="row"><label><input type="checkbox" id="so-show-id-failing">    Show identity-failing candidates</label></div>
+          <div class="row"><label><input type="checkbox" id="so-auto-escalate" checked> Auto-escalate to exhaustive on failure</label></div>
+        </div>
+
+        <!-- F. RNG -->
+        <div class="search-opt-group">
+          <div class="search-opt-group-title">RNG</div>
+          <div class="row"><label>Seed <input type="number" id="so-seed" placeholder="time-based" class="so-num"></label></div>
+          <div class="row">
+            <button id="so-reseed" class="small">Reseed &amp; restart alt search</button>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top: 10px;">
+          <button id="so-reset" class="small">Reset all to preset defaults</button>
+        </div>
+      </details>
+    </section>
+
+    <section class="card" id="status-card">
+      <h2>Status</h2>
+      <div id="status">Idle</div>
+      <div id="try-harder-row" style="margin-top: 8px;">
+        <button id="try-harder-btn" class="small">Try harder (exhaustive search)</button>
+        <span id="try-harder-busy" class="hidden" style="margin-left: 6px; font-size: 11px; color: #777;">
+          <span class="search-spinner"></span> running…
+        </span>
+      </div>
+    </section>
+
+    <section class="card hidden" id="riemann-map-card">
+      <h2>Riemann map φ(z)</h2>
+      <div id="riemann-map-content"></div>
+    </section>
+
+    <section class="card hidden" id="alternates-card">
+      <h2>
+        Alternate solutions
+        <span id="alt-search-indicator" class="hidden">
+          <span class="search-spinner"></span>
+          <span style="font-size: 11px; color: #777; text-transform: none; font-weight: normal;">searching…</span>
+        </span>
+      </h2>
+      <div id="alternates-list"></div>
+    </section>
+
+    </div><!-- /#controls-qd -->
+
+    <!-- ============== TAB 2: AQD (algebraic-weighted) ============== -->
+    <!-- Placeholder for Stage 0. The full AQD sidebar is built up in
+         Stages 1-6: R-input card, h-input card (reused widget), solver
+         settings, status, alternates, formula card. -->
+    <div id="controls-aqd" class="tab-panel" role="tabpanel" hidden>
+      <section class="card">
+        <h2>Algebraic Quadrature Domains</h2>
+        <div class="hint">
+          AQDs are <code>Ω</code> with weight <code>ρ = |α|²</code> where
+          <code>α = R′</code> for some rational primitive <code>R</code>. The
+          inverse problem reduces to solving for the rational function
+          <code>R∘φ</code> on <code>𝔻̄</code> via
+          <code>(R∘φ)(z) = R(w₀) + r#(z)</code> (Thm 6.4.1), then numerically
+          inverting <code>R</code> to recover <code>φ</code>.
+        </div>
+        <div class="hint" style="margin-top: 8px; color: #b8860b; font-weight: 600;">
+          Stage 0: tab scaffolding only. R-input UI and solver land in Stages 1–2.
+        </div>
+      </section>
+    </div><!-- /#controls-aqd -->
+  </aside>
+
+  <!-- ============== RIGHT: PLOT ============== -->
+  <main id="plot-area">
+    <canvas id="canvas"></canvas>
+    <div id="plot-overlay">
+      <button id="btn-fit" title="Fit view to data">Fit</button>
+      <button id="btn-reset" title="Reset view">Reset</button>
+    </div>
+    <div id="plot-readout"></div>
+  </main>
+
+</div>
+
+<!-- Backend math -->
+<script src="complex.js"></script>
+<script src="taylor.js"></script>
+<script src="solver.js"></script>                <!-- Shared infrastructure -->
+<script src="solver-faber.js"></script>          <!-- Shared inverse Faber primitives (QD.Faber) -->
+<script src="solver-qd.js"></script>             <!-- Bounded classical QDs (Family.boundedQD) -->
+<script src="solver-uqd.js"></script>            <!-- Unbounded classical QDs (Family.unboundedQD) -->
+<script src="solver-lqd-common.js"></script>     <!-- Shared LQD machinery (QD.LqdCommon) -->
+<script src="solver-lqd.js"></script>            <!-- Bounded non-singular LQDs (Family.boundedLQD) -->
+<script src="solver-lqd-singular.js"></script>   <!-- Bounded singular LQDs (Family.boundedLQD_singular) -->
+<script src="solver-uqd-lqd.js"></script>        <!-- Unbounded non-singular LQDs (Family.unboundedLQD) -->
+<script src="solver-uqd-lqd-singular.js"></script><!-- Unbounded singular LQDs (Family.unboundedLQD_singular) -->
+
+<!-- ============== AQD (algebraic-weighted) backend ============== -->
+<!-- Stage 0 stubs; populated in Stages 1-5. -->
+<script src="aqd/aqd-common.js"></script>     <!-- QD.Aqd namespace, R-input data model -->
+<script src="aqd/aqd-bounded.js"></script>    <!-- Bounded non-singular AQDs (Family.boundedAQD) -->
+
+<!-- Frontend UI -->
+<script src="ui.js"></script>
+<script src="aqd/aqd-ui.js"></script>         <!-- AQD-tab UI (mounts on DOMContentLoaded) -->
+
+<!-- Tab switching: minimal, no framework. Each .tab-btn toggles which
+     .tab-panel is visible. The plot canvas is shared; ui.js owns it for
+     QD/LQD, and aqd-ui.js will hook in when the AQD tab is selected. -->
+<script>
+(function () {
+  'use strict';
+  const tabs = document.querySelectorAll('.tab-btn');
+  const panels = {
+    qd:  document.getElementById('controls-qd'),
+    aqd: document.getElementById('controls-aqd'),
+  };
+  function activate(tabId) {
+    tabs.forEach(t => {
+      const on = t.dataset.tab === tabId;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    Object.entries(panels).forEach(([id, el]) => {
+      const on = id === tabId;
+      el.classList.toggle('active', on);
+      el.hidden = !on;
+    });
+    // Notify subsystems. Listeners are optional.
+    document.dispatchEvent(new CustomEvent('tab-changed', { detail: { tab: tabId } }));
+  }
+  tabs.forEach(t => t.addEventListener('click', () => activate(t.dataset.tab)));
+  // Initial: QD tab active (matches HTML markup).
+})();
+</script>
+</body>
+</html>

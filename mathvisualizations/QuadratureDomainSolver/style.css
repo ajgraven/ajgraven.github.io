@@ -1,0 +1,368 @@
+/* ===== Layout ===== */
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #2a2a2a;
+  background: #f3f4f6;
+  overflow: hidden;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 410px 1fr;
+  height: 100vh;
+}
+
+#controls {
+  background: #fff;
+  border-right: 1px solid #d8dbe0;
+  padding: 16px;
+  overflow-y: auto;
+}
+#controls h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  color: #1a2a44;
+}
+
+/* ===== Tab bar ===== */
+#tab-bar {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #d8dbe0;
+}
+#tab-bar .tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  color: #5677a8;
+  border-radius: 4px 4px 0 0;
+  margin-bottom: -1px;
+}
+#tab-bar .tab-btn:hover { background: #eef2f7; }
+#tab-bar .tab-btn.active {
+  background: #fff;
+  border-color: #d8dbe0;
+  color: #1a2a44;
+  font-weight: 600;
+}
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+#plot-area {
+  position: relative;
+  overflow: hidden;
+  background: #fafafa;
+}
+#canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+#plot-overlay {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 6px;
+  background: rgba(255,255,255,0.85);
+  border: 1px solid #d8dbe0;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+  user-select: none;
+}
+#plot-overlay button {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 4px 8px;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  color: #1a3e7a;
+}
+#plot-overlay button:hover { background: #eef2f7; }
+
+#plot-readout {
+  position: absolute;
+  bottom: 8px;
+  left: 12px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  color: #555;
+  background: rgba(255,255,255,0.75);
+  padding: 2px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+/* ===== Cards ===== */
+.card {
+  background: #fff;
+  border: 1px solid #e3e5ea;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.card h2 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5677a8;
+  margin: 0 0 8px 0;
+}
+.card .hint {
+  font-size: 11px;
+  color: #777;
+  margin-bottom: 6px;
+}
+
+/* ===== Inputs ===== */
+input[type="text"], input[type="number"], select {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+  border: 1px solid #c5c9d2;
+  border-radius: 4px;
+  background: #fff;
+  color: #1a2a44;
+}
+input[type="text"]:focus, input[type="number"]:focus, select:focus {
+  outline: none;
+  border-color: #5677a8;
+  box-shadow: 0 0 0 2px rgba(86, 119, 168, 0.18);
+}
+input.invalid { border-color: #b53030; background: #fcf2f2; }
+input[type="text"].cnum { width: 100px; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+
+/* 1-D sliders (magnitude / argument) attached to residue inputs */
+.residue-block {
+  margin: 4px 0;
+  padding: 4px 0;
+  border-top: 1px dashed #e8eaef;
+}
+.residue-block:first-child { border-top: none; padding-top: 0; }
+
+.slider1d-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 2px 12px;
+}
+.slider1d-row > label {
+  width: 28px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  color: #5677a8;
+}
+.slider1d {
+  flex: 1 1 auto;
+  min-width: 80px;
+  height: 16px;
+  margin: 0;
+  accent-color: #5677a8;
+}
+.slider1d-val {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  width: 56px;
+  text-align: right;
+  color: #555;
+}
+
+label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  margin: 3px 0;
+}
+.row { display: flex; align-items: center; gap: 8px; margin: 4px 0; flex-wrap: wrap; }
+
+button {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 10px;
+  border: 1px solid #c5c9d2;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #1a2a44;
+}
+button:hover { background: #eef2f7; border-color: #5677a8; }
+button.primary { background: #5677a8; color: #fff; border-color: #5677a8; }
+button.primary:hover { background: #4a6792; }
+button.small { padding: 2px 7px; font-size: 12px; }
+button.danger { color: #b53030; border-color: #e2c4c4; }
+button.danger:hover { background: #fceeee; }
+
+/* ===== Pole entries ===== */
+.pole {
+  border: 1px solid #e3e5ea;
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: #fbfcfd;
+}
+.pole-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.pole-num {
+  font-weight: 600;
+  font-size: 12px;
+  color: #5677a8;
+}
+.residues { margin-top: 5px; }
+.residue-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0;
+  font-size: 13px;
+}
+.residue-row .label-fixed {
+  width: 38px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  color: #5677a8;
+}
+
+/* ===== Status ===== */
+#status {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+#status .ok    { color: #2a8f2a; font-weight: 600; }
+#status .warn  { color: #b8860b; font-weight: 600; }
+#status .err   { color: #b53030; font-weight: 600; }
+#status .key   { color: #777; }
+
+#alternates-card .alt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed #eee;
+}
+#alternates-card .alt:last-child { border-bottom: none; }
+
+/* ===== Riemann map formula card (KaTeX-typeset) ===== */
+.rm-sym {
+  background: #f4f6fb;
+  border-left: 3px solid #5677a8;
+  padding: 6px 10px;
+  margin: 4px 0 10px 0;
+  overflow-x: auto;
+}
+.rm-sym .katex { font-size: 0.88em; }
+
+.rm-section { margin-top: 8px; }
+.rm-section > summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5677a8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  user-select: none;
+  padding: 2px 0;
+}
+.rm-section > summary:hover { color: #3a5680; }
+
+.rm-numer {
+  padding: 4px 0 4px 4px;
+  overflow-x: auto;
+}
+.rm-numer .katex { font-size: 0.85em; }
+.rm-numer .katex-display { margin: 4px 0; }
+
+table.rm-params {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: 12px;
+}
+table.rm-params td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #eef0f4;
+  vertical-align: middle;
+}
+table.rm-params tr:last-child td { border-bottom: none; }
+table.rm-params td.rm-name {
+  width: 1%;            /* shrink-to-fit */
+  white-space: nowrap;
+  text-align: right;
+  color: #1a3e7a;
+  background: #f7f9fc;
+}
+table.rm-params td.rm-value {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  color: #1a2a44;
+  word-break: break-word;
+}
+table.rm-params td.rm-name .katex { font-size: 1em; }
+
+.hidden { display: none !important; }
+
+.search-spinner {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border: 2px solid #c5c9d2;
+  border-top-color: #5677a8;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== Search options (advanced) panel ===== */
+.search-opt-group {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #d8dbe0;
+}
+.search-opt-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #555;
+  margin-bottom: 6px;
+}
+input.so-num {
+  width: 100px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+/* Domain-type sub-grouping (Classical QD vs Log-weighted QD) */
+.domain-mode-group {
+  margin-bottom: 8px;
+}
+.domain-mode-group:last-of-type {
+  margin-bottom: 0;
+}
+.domain-mode-group-label {
+  font-size: 10px;
+  color: #777;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 3px;
+  font-weight: 500;
+}
