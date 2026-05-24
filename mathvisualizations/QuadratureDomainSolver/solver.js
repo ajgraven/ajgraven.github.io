@@ -9,11 +9,12 @@
 //
 // Per-family methods (Phi evaluation, residual blocks, identity verifier,
 // initial-guess strategies, continuation strategies) live in dedicated files:
-//   solver-qd.js              — Family.boundedQD
-//   solver-uqd.js             — Family.unboundedQD
-//   solver-lqd.js             — Family.boundedLQD (non-singular)
-//   solver-lqd-singular.js    — Family.boundedLQD_singular
-//   (future) solver-uqd-lqd.js / solver-uqd-lqd-singular.js
+//   solver-qd.js                  — Family.boundedQD
+//   solver-uqd.js                 — Family.unboundedQD
+//   solver-lqd.js                 — Family.boundedLQD            (non-singular)
+//   solver-lqd-singular.js        — Family.boundedLQD_singular
+//   solver-uqd-lqd.js             — Family.unboundedLQD          (non-singular)
+//   solver-uqd-lqd-singular.js    — Family.unboundedLQD_singular
 //
 // Each family file calls `QD.registerFamily('X')` after populating
 // `QD.Family.X`. The dispatcher walks `familyDispatchOrder` (most-specific
@@ -439,35 +440,38 @@ function diverseInitialGuess(hData, norm, rng, r = 0) {
   }
 }
 
-// --------- Schema runtime (R3) --------------------------------------------
-// Each family may declare a `schema` describing the layout of its packed
-// real vector. The runtime synthesizes packPhi / unpackPhi / clamp from
-// the declaration so adding a new family's unknowns is a schema edit, not
-// six lines of pack/unpack and a separate clamp call inside Newton.
+// --------- Schema runtime --------------------------------------------------
+// Each family may declare a `schema` array describing the layout of its
+// packed real vector. The runtime synthesizes packPhi / unpackPhi / clamp
+// from the declaration, so adding a new family's unknowns becomes a schema
+// edit rather than six lines of bespoke pack/unpack.
 //
-// Schema entry kinds:
-//   { kind: 'complex',  name: 'z0',    clamp?: { side:'in'|'out', cap, minR } }
-//   { kind: 'complex',  name: 'gamma' }
-//   { kind: 'branches', name: 'branches',
-//     fields: [ { kind: 'complex', name: 'z', clamp: {...} },
-//               { kind: 'complexList', name: 'A', len: 'm_j' } ] }
-//   { kind: 'complexList', name: 'polyA', len: 'm_inf' }     // optional, present iff template.polyA?.length
+// Entry kinds (all currently in use by the LQD-singular / unbounded-LQD
+// families):
+//
+//   { kind: 'complex',     name, clamp?: {side, cap, minR, maxR} }
+//       — a top-level complex stored at phi[name]
+//   { kind: 'complexList', name }
+//       — a list of complex stored at phi[name]; length taken from
+//         template[name].length
+//   { kind: 'branchesZ',   clamp? }
+//       — per-branch .z complex; creates the branch objects
+//   { kind: 'branchesA' }
+//       — per-branch .A list; length per branch taken from template
+//
+// Clamp options (only `complex` and `branchesZ` entries support `clamp`):
+//   side='in'  : keep |c| ≤ cap; optional `minR` pushes outward to ≥ minR.
+//   side='out' : keep |c| ≥ cap; optional `maxR` pulls inward to ≤ maxR.
+//
+// Convention: branchesZ MUST appear before branchesA in the schema (the
+// branch objects are created when branchesZ is unpacked; A entries just
+// fill them in).
 //
 // The schema is OPTIONAL — families that don't declare one keep their
-// hand-written packPhi/unpackPhi. (Currently only future unbounded LQDs
-// would benefit most; existing families continue to work as-is.) The
-// schema-driven clamp is wired in via the family's enforceInDisk flag
-// plus an optional `extraClamps` callback for non-z_j coordinates.
+// hand-written packPhi / unpackPhi. The schema-driven clamp is invoked
+// at the end of unpackPhiBySchema, in addition to Newton's per-step
+// enforceInDisk / enforceOutDisk clamp on branches.
 // =============================================================================
-
-// Schema entry kinds:
-//   { kind: 'complex',     name, clamp?: {side, cap, minR} }      — top-level complex
-//   { kind: 'complexList', name }                                  — list of complex (length from template[name])
-//   { kind: 'branchesZ',   clamp? }                                — per-branch .z complex
-//   { kind: 'branchesA' }                                          — per-branch .A list (length from template.branches[j].A)
-//
-// Convention: branchesZ MUST appear before branchesA. (z's create the
-// branch objects; A's just fill them in.)
 function _packEntry(entry, phi, v) {
   if (entry.kind === 'complex') {
     const c = phi[entry.name] || { re: 0, im: 0 };
@@ -840,6 +844,11 @@ function phisEquivalent(a, b, tol = 1e-4) {
 }
 
 // --------- Exports --------------------------------------------------------
+// Family files may attach additional helpers to QD after this object is set
+// (e.g. QD.diskInitialGuess from solver-qd.js, QD.unboundedInitialGuess from
+// solver-uqd.js). Search the family files for `QD.foo = ...` if you need the
+// full list at any point — it isn't centralized here on purpose, since the
+// optional re-exports are part of each family's surface.
 const _exports = {
   Complex, Taylor,
   // Dispatchers + shared
@@ -851,18 +860,10 @@ const _exports = {
   isBoundaryUnivalent, sampleBoundary, sampleBoundaryAdaptive,
   binomialCoeff, diverseInitialGuess,
   solveInverseQD, searchAlternates, mulberry32,
-  // Family registry (populated by solver-{qd,uqd,lqd,lqd-singular}.js).
+  // Family registry (populated by each solver-{qd,uqd,lqd,...}.js).
   Family, selectFamily, registerFamily,
-  // Schema runtime (R3) — opt-in pack/unpack/clamp from declarative schema.
+  // Schema runtime — opt-in pack/unpack/clamp from declarative schema.
   packPhiBySchema, unpackPhiBySchema, applySchemaClamps,
-  // Convenience re-exports populated by family files (kept for back-compat
-  // with existing callers and tests). Each family adds its bits when it
-  // loads — see solver-qd.js / solver-uqd.js.
-  // QD.diskInitialGuess, QD.perturbedInitialGuess, QD.computeTargetA,
-  // QD.continuationSolve, QD.verifyQuadratureIdentity         (← solver-qd.js)
-  // QD.unboundedInitialGuess, QD.perturbedUnboundedInitialGuess,
-  // QD.continuationInC, QD.phiLaurentAtInfinity, QD.computeTargetF,
-  // QD.verifyQuadratureIdentityUnbounded                      (← solver-uqd.js)
 };
 if (typeof window !== 'undefined') window.QD = _exports;
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;

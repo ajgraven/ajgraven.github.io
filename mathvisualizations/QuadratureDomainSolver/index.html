@@ -21,11 +21,12 @@
   <aside id="controls">
     <h1>Quadrature Domain Solver</h1>
 
-    <!-- Tab bar: switches between the classical/LQD solver (Tab 1) and the
-         algebraic-weighted solver (Tab 2). Tab panels are siblings below. -->
+    <!-- Tab bar: QD/LQD (inverse) and Direct problem (given φ → h).
+         Tab panels are siblings below. The AQD tab is deferred to a future
+         release; its source files live in app/disabled/aqd/. -->
     <div id="tab-bar" role="tablist">
-      <button class="tab-btn active" data-tab="qd"  role="tab" aria-selected="true">QD / LQD</button>
-      <button class="tab-btn"        data-tab="aqd" role="tab" aria-selected="false">AQD</button>
+      <button class="tab-btn active" data-tab="qd"     role="tab" aria-selected="true">QD / LQD</button>
+      <button class="tab-btn"        data-tab="direct" role="tab" aria-selected="false">Direct problem</button>
     </div>
 
     <!-- ============== TAB 1: QD / LQD (existing UI) ============== -->
@@ -309,26 +310,20 @@
 
     </div><!-- /#controls-qd -->
 
-    <!-- ============== TAB 2: AQD (algebraic-weighted) ============== -->
-    <!-- Placeholder for Stage 0. The full AQD sidebar is built up in
-         Stages 1-6: R-input card, h-input card (reused widget), solver
-         settings, status, alternates, formula card. -->
-    <div id="controls-aqd" class="tab-panel" role="tabpanel" hidden>
+    <!-- ============== TAB 2: Direct problem (given φ → h) ============== -->
+    <!-- Populated lazily by direct-ui.js on first tab activation. -->
+    <div id="controls-direct" class="tab-panel" role="tabpanel" hidden>
       <section class="card">
-        <h2>Algebraic Quadrature Domains</h2>
+        <h2>Direct problem</h2>
         <div class="hint">
-          AQDs are <code>Ω</code> with weight <code>ρ = |α|²</code> where
-          <code>α = R′</code> for some rational primitive <code>R</code>. The
-          inverse problem reduces to solving for the rational function
-          <code>R∘φ</code> on <code>𝔻̄</code> via
-          <code>(R∘φ)(z) = R(w₀) + r#(z)</code> (Thm 6.4.1), then numerically
-          inverting <code>R</code> to recover <code>φ</code>.
-        </div>
-        <div class="hint" style="margin-top: 8px; color: #b8860b; font-weight: 600;">
-          Stage 0: tab scaffolding only. R-input UI and solver land in Stages 1–2.
+          Given a Riemann map <code>φ : 𝔻 → Ω</code>, compute the quadrature
+          function <code>h</code> for which <code>Ω ∈ QD(h)</code>. Supports
+          bounded classical QD (polynomial and rational <code>φ</code>),
+          unbounded classical QD (Laurent at ∞), and a numerical-fallback
+          mode for arbitrary expressions.
         </div>
       </section>
-    </div><!-- /#controls-aqd -->
+    </div><!-- /#controls-direct -->
   </aside>
 
   <!-- ============== RIGHT: PLOT ============== -->
@@ -356,25 +351,23 @@
 <script src="solver-uqd-lqd.js"></script>        <!-- Unbounded non-singular LQDs (Family.unboundedLQD) -->
 <script src="solver-uqd-lqd-singular.js"></script><!-- Unbounded singular LQDs (Family.unboundedLQD_singular) -->
 
-<!-- ============== AQD (algebraic-weighted) backend ============== -->
-<!-- Stage 0 stubs; populated in Stages 1-5. -->
-<script src="aqd/aqd-common.js"></script>     <!-- QD.Aqd namespace, R-input data model -->
-<script src="aqd/aqd-bounded.js"></script>    <!-- Bounded non-singular AQDs (Family.boundedAQD) -->
+<!-- ============== Direct-problem (φ → h) ============== -->
+<script src="direct/direct-common.js"></script>   <!-- QD.Direct math kernel -->
 
 <!-- Frontend UI -->
 <script src="ui.js"></script>
-<script src="aqd/aqd-ui.js"></script>         <!-- AQD-tab UI (mounts on DOMContentLoaded) -->
+<script src="direct/direct-ui.js"></script>   <!-- Direct-tab UI (mounts on tab activation) -->
 
 <!-- Tab switching: minimal, no framework. Each .tab-btn toggles which
      .tab-panel is visible. The plot canvas is shared; ui.js owns it for
-     QD/LQD, and aqd-ui.js will hook in when the AQD tab is selected. -->
+     QD/LQD and direct-ui.js hooks in when the Direct tab is selected. -->
 <script>
 (function () {
   'use strict';
   const tabs = document.querySelectorAll('.tab-btn');
   const panels = {
-    qd:  document.getElementById('controls-qd'),
-    aqd: document.getElementById('controls-aqd'),
+    qd:     document.getElementById('controls-qd'),
+    direct: document.getElementById('controls-direct'),
   };
   function activate(tabId) {
     tabs.forEach(t => {

@@ -1,8 +1,8 @@
 // =============================================================================
 // solver-faber.js -- Shared inverse Faber transform primitives.
 //
-// Every family in the app (classical bounded/unbounded QDs, all four LQDs,
-// and the upcoming AQDs) eventually solves an inverse Faber transform:
+// Every inverse-problem family in the app (classical bounded/unbounded QDs,
+// all four LQDs) eventually solves an inverse Faber transform:
 //
 //   • At a finite pole a_j of h, with z_j = φ⁻¹(a_j), match a local target
 //     principal part (in t = z − z_j) given by a residue list. The result
@@ -13,17 +13,14 @@
 //   • At ∞ (unbounded variants only), match the polynomial part of h via
 //     the Laurent coefficients f_l of φ around ∞.
 //
-// Both operations were duplicated across solver-qd / solver-uqd / solver-lqd-
-// common with identical numerics; this file is the single source of truth.
-//
-// Math reference: §3.2 / §4.3 (classical & PQD) and §5.4 / §6.4 (LQD & AQD)
-// of the thesis — the primitive is family-agnostic; family-specific code is
+// Math reference: §3.2 / §4.3 (classical & PQD) and §5.4 (LQD) of the
+// thesis. The primitive is family-agnostic; family-specific code is
 // confined to (i) pre-processing residues (e.g. LQDs use modified residues
 // D_{j,s} = a_j C_{j,s} + C_{j,s+1}) and (ii) building the input phiTilde
 // from each family's own Taylor evaluator.
 //
-// Stage 0.5: this file is loaded before any family solver so QD.Faber is
-// available when those solvers register themselves.
+// This file must be loaded after solver.js (it depends on QD existing) and
+// before any family solver (the families call QD.Faber.* during registration).
 // =============================================================================
 'use strict';
 

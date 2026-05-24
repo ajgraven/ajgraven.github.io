@@ -60,29 +60,13 @@ const QD_PRESETS_BOUNDED = [
   { id: 'unit-disk',     label: 'Unit disk:  h = 1/w',
     poles: [ { a: '0', order: 1, residues: ['1'] } ] },
 
-  { id: 'big-disk',      label: 'Disk of radius 2:  h = 4/w',
-    poles: [ { a: '0', order: 1, residues: ['4'] } ] },
+  { id: 'cardioid',      label: 'Cardioid:  h = 1.5/w + 0.5/w²',
+    poles: [ { a: '0', order: 2, residues: ['1.5', '0.5'] } ] },
 
-  { id: 'shifted-disk',  label: 'Shifted disk:  h = 1/(w − (1+i))',
-    poles: [ { a: '1+i', order: 1, residues: ['1'] } ] },
-
-  { id: 'two-point-sym', label: 'Two-point symmetric:  1/(w−½) + 1/(w+½)',
+  { id: 'two-point-sym', label: 'Two-point symmetric:  1.5/(w−1) + 1.5/(w+1)',
     poles: [
-      { a: '-0.5', order: 1, residues: ['1'] },
-      { a:  '0.5', order: 1, residues: ['1'] },
-    ] },
-
-  { id: 'two-point-asym', label: 'Two-point asymmetric:  1/(w+½) + 0.6/(w−0.7)',
-    poles: [
-      { a: '-0.5', order: 1, residues: ['1']   },
-      { a:  '0.7', order: 1, residues: ['0.6'] },
-    ] },
-
-  { id: 'three-point', label: 'Three points:  2/(w−1) + 2/(w+1) + 2/(w+i)',
-    poles: [
-      { a:  '1', order: 1, residues: ['2'] },
-      { a: '-1', order: 1, residues: ['2'] },
-      { a: '-i', order: 1, residues: ['2'] },
+      { a:  '1', order: 1, residues: ['1.5'] },
+      { a: '-1', order: 1, residues: ['1.5'] },
     ] },
 
   { id: 'triangle', label: 'Equilateral 3-point on unit circle',
@@ -91,70 +75,33 @@ const QD_PRESETS_BOUNDED = [
       { a: '-0.5+0.8660254i', order: 1, residues: ['1'] },
       { a: '-0.5-0.8660254i', order: 1, residues: ['1'] },
     ] },
-
-  { id: 'three-asym', label: 'Asymmetric 3-point with complex residues',
-    poles: [
-      { a:  '0.4+0.5i', order: 1, residues: ['0.5']      },
-      { a: '-0.6+0.1i', order: 1, residues: ['0.4+0.2i'] },
-      { a:  '0-0.7i',   order: 1, residues: ['0.6-0.2i'] },
-    ] },
-
-  { id: 'order-2',       label: 'Order-2 pole:  h = 2/w + 0.75/w²',
-    poles: [ { a: '0', order: 2, residues: ['2', '0.75'] } ] },
-
-  { id: 'order-2-small', label: 'Order-2 pole, smaller:  h = 1/w + 0.3/w²',
-    poles: [ { a: '0', order: 2, residues: ['1', '0.3'] } ] },
 ];
 
 const QD_PRESETS_UNBOUNDED = [
   //  id                       label                                                  poles  + c (+ polyCoeffs)
-  { id: 'aharonov-shapiro',       label: 'One-point:  h = 1/(w − 2),  c = 0.6',
+  { id: 'unb-1pt-pos',  label: 'One-point positive charge:  h = 1/(w − 2),  c = 2',
     poles: [ { a: '2', order: 1, residues: ['1'] } ],
-    c: 0.6 },
+    c: 2 },
 
-  { id: 'aharonov-shapiro-small', label: 'One-point, small c:  h = 1/(w − 2),  c = 0.3',
-    poles: [ { a: '2', order: 1, residues: ['1'] } ],
-    c: 0.3 },
+  { id: 'unb-1pt-neg',  label: 'One-point negative charge:  h = −0.5/(w − 2),  c = 0.7',
+    poles: [ { a: '2', order: 1, residues: ['-0.5'] } ],
+    c: 0.7 },
 
-  { id: 'unb-2pt-asym',           label: 'Two-point asymmetric:  1/(w−2) + 0.6/(w+1.5),  c = 0.4',
-    poles: [
-      { a:  '2',  order: 1, residues: ['1']   },
-      { a: '-1.5', order: 1, residues: ['0.6'] },
-    ],
-    c: 0.4 },
+  { id: 'unb-1pt-imag', label: 'One-point imaginary charge:  h = i/(w − 2),  c = 0.8',
+    poles: [ { a: '2', order: 1, residues: ['i'] } ],
+    c: 0.8 },
 
-  { id: 'unb-3pt-complex',        label: 'One-point complex:  h = 1.2i/(w − 2),  c = 0.4',
-    poles: [ { a: '2', order: 1, residues: ['1.2i'] } ],
-    c: 0.4 },
-
-  { id: 'unb-3pt-equi',           label: 'Three points: 1, −1, −i (residues 2 each),  c = 0.3',
-    poles: [
-      { a:  '1', order: 1, residues: ['2'] },
-      { a: '-1', order: 1, residues: ['2'] },
-      { a: '-i', order: 1, residues: ['2'] },
-    ],
-    c: 0.3 },
-
-  // ---- Presets exercising the polynomial part of h (nodes at infinity) ----
-
-  { id: 'unb-poly-const', label: 'Pure constant:  h = 0.5,  c = 1',
+  { id: 'unb-deltoid',  label: 'Deltoid:  h = w²,  c = 0.5',
     poles: [],
-    polyCoeffs: ['0.5'],
-    c: 1.0 },
-
-  { id: 'unb-poly-mixed', label: 'Mixed:  h = 0.5·w + 1/(w − 2),  c = 0.6',
-    poles: [ { a: '2', order: 1, residues: ['1'] } ],
-    polyCoeffs: ['0', '0.5'],
-    c: 0.6 },
-
-  { id: 'unb-poly-quad',  label: 'Quadratic:  h = 0.2 + 0.1·w + 0.3·w²,  c = 0.5',
-    poles: [],
-    polyCoeffs: ['0.2', '0.1', '0.3'],
+    polyCoeffs: ['0', '0', '1'],
     c: 0.5 },
 
-  { id: 'unb-1pt-complex', label: 'One-pt complex residue:  h = i/(w − 2),  c = 0.6',
-    poles: [ { a: '2', order: 1, residues: ['i'] } ],
-    c: 0.6 },
+  { id: 'unb-2pt-nonuniq', label: 'Two-point non-uniqueness:  1/(w−1) + 1/(w+1),  c = 0.4',
+    poles: [
+      { a:  '1', order: 1, residues: ['1'] },
+      { a: '-1', order: 1, residues: ['1'] },
+    ],
+    c: 0.4 },
 ];
 
 // ===========================================================================
@@ -1755,8 +1702,31 @@ class DomainPlot {
     if (this.data && this.data.boundaryPts && this.data.boundaryPts.length > 0) {
       this.drawBoundary();
     }
+    // Optional dashed overlay (e.g. for Direct-tab round-trip diagnostics).
+    if (this.data && this.data.overlayBoundary && this.data.overlayBoundary.length > 0) {
+      this.drawOverlayBoundary();
+    }
     if (this.data && this.data.poles)  this.drawPoles();
     if (this.data && this.data.w0)     this.drawW0();
+  }
+
+  drawOverlayBoundary() {
+    const c = this.ctx;
+    const pts = this.data.overlayBoundary;
+    c.save();
+    c.beginPath();
+    const p0 = this.toScreen(pts[0].re, pts[0].im);
+    c.moveTo(p0.x, p0.y);
+    for (let i = 1; i < pts.length; i++) {
+      const p = this.toScreen(pts[i].re, pts[i].im);
+      c.lineTo(p.x, p.y);
+    }
+    c.closePath();
+    c.strokeStyle = '#d4a017';                            // gold
+    c.lineWidth = 1.8;
+    if (c.setLineDash) c.setLineDash([6, 4]);
+    c.stroke();
+    c.restore();
   }
 
   // ----- Vector-field overlay: V(w) = conj(h(w)) ---------------------------
@@ -2612,3 +2582,114 @@ $('#alternates-list').addEventListener('click', e => {
 
 // Initial solve
 solveAndRender();
+
+// ---------- Hooks for the Direct-problem tab ----------------------------
+// direct-ui.js calls these to (a) push a ∂Ω preview onto the shared canvas,
+// (b) send a computed h back to the QD/LQD tab and switch tabs.
+window.QD = window.QD || {};
+window.QD.Direct = window.QD.Direct || {};
+
+window.QD.Direct._setPlotBoundary = function (boundaryPts, opts) {
+  // Display the user's φ-boundary on the canvas. Accepts an `unbounded`
+  // flag in opts so the bounded-vs-unbounded shading convention matches
+  // what the inverse solver uses. opts.overlayBoundary, if present, is
+  // drawn as a dashed gold curve over the main boundary (used by the
+  // round-trip diagnostic to show the inverse-recovered φ).
+  opts = opts || {};
+  plot.setData({
+    boundaryPts,
+    poles: [],
+    w0: boundaryPts.length ? boundaryPts[0] : { re: 0, im: 0 },
+    univalent: !boundarySelfIntersectsSimple(boundaryPts),
+    unbounded: !!opts.unbounded,
+    overlayBoundary: opts.overlayBoundary || null,
+    vfMode: 'off',
+    hData: { poles: [] },
+    phi: null,
+  });
+};
+
+window.QD.Direct._setPlotOverlay = function (overlayBoundary) {
+  // Append/replace the overlay boundary without disturbing the main one.
+  if (!plot.data) return;
+  plot.data.overlayBoundary = overlayBoundary || null;
+  plot.render();
+};
+
+// Cheap O(N²) self-intersection check — sufficient for the preview.
+function boundarySelfIntersectsSimple(pts) {
+  const N = pts.length;
+  if (N < 4) return false;
+  for (let i = 0; i < N; i++) {
+    const a1 = pts[i], a2 = pts[(i + 1) % N];
+    for (let j = i + 2; j < N; j++) {
+      if (j === N - 1 && i === 0) continue;
+      const b1 = pts[j], b2 = pts[(j + 1) % N];
+      if (segmentsIntersect(a1, a2, b1, b2)) return true;
+    }
+  }
+  return false;
+}
+function segmentsIntersect(p1, p2, p3, p4) {
+  function ccw(a, b, c) {
+    return (c.im - a.im) * (b.re - a.re) > (b.im - a.im) * (c.re - a.re);
+  }
+  return ccw(p1, p3, p4) !== ccw(p2, p3, p4) &&
+         ccw(p1, p2, p3) !== ccw(p1, p2, p4);
+}
+
+window.QD.Direct._sendHToInverseTab = function (hData, opts) {
+  // Populate the QD/LQD state from hData (and, for unbounded, the conformal
+  // radius c) and re-render the inverse-tab sidebar. Then switch tabs.
+  opts = opts || {};
+  const unbounded = !!opts.unbounded;
+
+  state.poles = hData.poles.map(p => ({
+    a: QD.Complex.toString(p.a, 6),
+    order: p.principal.length,
+    residues: p.principal.map(c => QD.Complex.toString(c, 6)),
+  }));
+
+  if (unbounded) {
+    // Unbounded mode: set c-slider + polyPart, no manual w0.
+    const ubRadio = document.querySelector('input[name="domain-mode"][value="unbounded"]');
+    if (ubRadio) ubRadio.checked = true;
+    state.mode = 'unbounded';
+    if (typeof opts.c === 'number' && opts.c > 0) {
+      const cInput = document.getElementById('c-manual');
+      const cSlider = document.getElementById('c-slider');
+      if (cInput)  cInput.value  = opts.c.toString();
+      if (cSlider) cSlider.value = opts.c.toString();
+      state.c = opts.c;
+    }
+    // Populate polyPart fields.
+    const polyPart = hData.polyPart || [];
+    const polyDeg = polyPart.length - 1;
+    const polyDegInput = document.getElementById('poly-degree');
+    if (polyDegInput) polyDegInput.value = polyDeg.toString();
+    state.polyDegree = polyDeg;
+    state.polyCoefs = polyPart.map(c => QD.Complex.toString(c, 6));
+    renderPolyCoefList();
+    $('#poly-part-section').classList.toggle('hidden', false);
+  } else {
+    // Bounded mode: set manual w0 to the (single) pole location.
+    const boundedRadio = document.querySelector('input[name="domain-mode"][value="bounded"]');
+    if (boundedRadio) boundedRadio.checked = true;
+    state.mode = 'bounded';
+    if (hData.poles.length === 1) {
+      document.querySelector('input[name="w0mode"][value="manual"]').checked = true;
+      document.getElementById('w0-manual').disabled = false;
+      document.getElementById('w0-manual').value = QD.Complex.toString(hData.poles[0].a, 6);
+      state.w0Mode = 'manual';
+      state.w0Manual = QD.Complex.toString(hData.poles[0].a, 6);
+    }
+    $('#poly-part-section').classList.toggle('hidden', true);
+  }
+
+  renderPolesList();
+  document.getElementById('preset-select').value = '';
+
+  // Switch tabs and re-solve.
+  document.querySelector('.tab-btn[data-tab="qd"]').click();
+  solveAndRender();
+};

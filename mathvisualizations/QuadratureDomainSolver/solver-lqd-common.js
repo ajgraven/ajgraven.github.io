@@ -18,10 +18,9 @@
 //
 // Each LQD family supplies the *family-specific* bits: gauge equation,
 // q-equation if applicable, test-function class, canonicalization. The
-// common machinery lives here.
-//
-// The upcoming unbounded LQD variants will reuse all of this (the Faber loop
-// is family-agnostic given phiTaylorAt and modified residues).
+// common machinery lives here, and is reused by both the bounded and
+// unbounded LQD families (the Faber loop is family-agnostic given
+// phiTaylorAt and modified residues).
 // =============================================================================
 
 (function () {

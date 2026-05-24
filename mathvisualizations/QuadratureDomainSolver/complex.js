@@ -103,6 +103,10 @@ const Complex = {
     return {re, im};
   },
 
+  // toString: legacy fixed-decimal formatter, used by ui.js call sites that
+  // need a specific decimal-place count (e.g. canvas overlay labels).
+  // For human-readable expression-style output (KaTeX / paste-roundtrip /
+  // display cards) use Complex.format instead.
   toString(a, digits = 4) {
     const r = a.re, i = a.im;
     if (Math.abs(i) < 1e-12) return Number(r.toFixed(digits)).toString();
@@ -116,6 +120,54 @@ const Complex = {
     const iAbs = Math.abs(i);
     const iStr = Math.abs(iAbs - 1) < 1e-12 ? '' : Number(iAbs.toFixed(digits)).toString();
     return rStr + sign + iStr + 'i';
+  },
+
+  // format: unified expression-style complex formatter.
+  //
+  //   opts.digits   significant figures, default 6 (toPrecision-style)
+  //   opts.tol      tolerance for "snap to zero" and "snap to integer",
+  //                 default 1e-12
+  //
+  // Snaps any component within `tol` of an integer to that integer, so
+  // numerical drift like 0.99999999999 renders as "1" cleanly. Handles the
+  // standard short forms: 0, ±i, ±1±i, pure real, pure imaginary.
+  //
+  // Replaces direct-common.js's formatComplex and direct-ui.js's
+  // coeffToString / complexToString / complexToKatex (which had four
+  // near-identical bodies).
+  format(a, opts) {
+    if (!a) return '0';
+    opts = opts || {};
+    const digits = opts.digits ?? 6;
+    const tol    = opts.tol    ?? 1e-12;
+
+    // Snap a real to the nearest integer if within tol; else within tol of
+    // zero, return 0; else pass through.
+    const snap = (x) => {
+      if (!isFinite(x)) return x;
+      if (Math.abs(x) < tol) return 0;
+      const r = Math.round(x);
+      if (Math.abs(x - r) < tol) return r;
+      return x;
+    };
+    // Format a real (after snap): integers as-is, others via toPrecision.
+    const fmt = (x) => {
+      if (!isFinite(x)) return String(x);
+      if (Number.isInteger(x)) return String(x);
+      return Number(x.toPrecision(digits)).toString();
+    };
+
+    const r = snap(a.re), i = snap(a.im);
+    if (i === 0) return fmt(r);
+    if (r === 0) {
+      if (i ===  1) return 'i';
+      if (i === -1) return '-i';
+      return fmt(i) + 'i';
+    }
+    if (i ===  1) return fmt(r) + '+i';
+    if (i === -1) return fmt(r) + '-i';
+    const sign = i < 0 ? '' : '+';   // fmt(i) carries its own '-' when i < 0
+    return fmt(r) + sign + fmt(i) + 'i';
   }
 };
 
