@@ -40,6 +40,26 @@
 // h_data = { poles: [{a, principal:[…]}, …], polyPart: [Complex, …] }
 // =============================================================================
 
+// --------- Named numeric constants ----------------------------------------
+// Centralized so changes propagate everywhere; literal sites elsewhere are
+// being migrated to these names (HANDOFF #27 cleanup).
+//
+//   ZERO_THRESHOLD   — `Complex.abs2(c) < ZERO_THRESHOLD` ⇒ c is "zero". Used
+//                      to detect a = 0 entries (higher-order pole at origin)
+//                      and to test residue/pole-location nullity in solvers.
+//   DISK_CLAMP_OUT   — schemas with side='out' default cap. Keeps |z| just
+//                      OUTSIDE the unit disk for unbounded families.
+//   DISK_CLAMP_IN    — schemas with side='in' default cap. Keeps |z| just
+//                      INSIDE the unit disk for bounded families.
+//   Z0_MAX_RADIUS    — upper bound on |z₀| for unbounded singular LQDs to
+//                      keep Newton out of the z₀ → ∞ degenerate limit.
+//   DEFAULT_FD_EPS   — forward-difference step for the numerical Jacobian.
+const ZERO_THRESHOLD = 1e-20;
+const DISK_CLAMP_OUT = 1.0001;
+const DISK_CLAMP_IN  = 0.9999;
+const Z0_MAX_RADIUS  = 1000;
+const DEFAULT_FD_EPS = 1e-7;
+
 // --------- Generic clone: must propagate every family-specific field ------
 function clonePhi(phi) {
   return {
@@ -48,6 +68,13 @@ function clonePhi(phi) {
     c: phi.c,
     w0: phi.w0 ? Complex.clone(phi.w0) : { re: 0, im: 0 },
     polyA: phi.polyA ? phi.polyA.map(Complex.clone) : [],
+    // lqdBeta: polynomial-h extension for unbounded LQDs (Σ β_l / z^l inside
+    // the exp). Cloned through so warm-start across c-continuation steps
+    // preserves the β's.
+    lqdBeta: phi.lqdBeta ? phi.lqdBeta.map(Complex.clone) : [],
+    // lqdGamma: higher-order-pole-at-origin extension for unbounded singular
+    // LQDs (Σ c_l / z^l inside the exp, distinct from lqdBeta).
+    lqdGamma: phi.lqdGamma ? phi.lqdGamma.map(Complex.clone) : [],
     z0:    phi.z0    ? Complex.clone(phi.z0)    : undefined,
     gamma: phi.gamma ? Complex.clone(phi.gamma) : undefined,
     q:     phi.q     ? Complex.clone(phi.q)     : undefined,
@@ -142,8 +169,13 @@ function solveLeastSquares(A, b) {
 }
 
 // Numerical Jacobian via forward differences.
-function numericalJacobian(v, evalF, eps = 1e-7) {
-  const F0 = evalF(v);
+//
+// Forward differences need a baseline F(v). Most callers (newtonSolve) have
+// just evaluated F at the current iterate to test convergence; passing it
+// in as `F0Opt` saves one residual evaluation per Newton step — roughly a
+// 1 / (n + 1) speedup, where n = packPhi length (typically 10–20 for QDs).
+function numericalJacobian(v, evalF, eps = DEFAULT_FD_EPS, F0Opt) {
+  const F0 = F0Opt || evalF(v);
   const m = F0.length;
   const n = v.length;
   const J = Array.from({ length: m }, () => new Array(n));
@@ -166,7 +198,7 @@ function newtonSolve(phi_init, hData, options = {}) {
   const {
     maxIter = 80,
     tolerance = 1e-10,
-    finiteDiffEps = 1e-7,
+    finiteDiffEps = DEFAULT_FD_EPS,
     armijoFactor = 1e-4,
     backtrackMax = 25,
     minStep = 1e-12,
@@ -215,7 +247,8 @@ function newtonSolve(phi_init, hData, options = {}) {
       return { success: true, phi: fam.unpackPhi(v, template), iterations: iter, residual: Fnorm };
     }
     let J;
-    try { J = jacobianFn(v, evalF, finiteDiffEps); }
+    // Pass the just-computed F to the Jacobian builder so it doesn't re-evaluate.
+    try { J = jacobianFn(v, evalF, finiteDiffEps, F); }
     catch (e) {
       return { success: false, error: "Jacobian failed: " + e.message, phi: fam.unpackPhi(v, template), iterations: iter };
     }
@@ -258,7 +291,7 @@ function newtonSolve(phi_init, hData, options = {}) {
         for (let j = 0; j < template.branches.length; j++) {
           const re = v_new[2 * j], im = v_new[2 * j + 1];
           const r = Math.hypot(re, im);
-          const cap = 1.0001;
+          const cap = DISK_CLAMP_OUT;
           if (r < cap) {
             const scl = r > 1e-12 ? cap / r : cap;
             v_new[2 * j] = re * scl; v_new[2 * j + 1] = im * scl;
@@ -551,14 +584,14 @@ function applySchemaClamps(phi, schema) {
     if (!cl) return;
     const r = Math.hypot(c.re, c.im);
     if (cl.side === 'in') {
-      const cap = cl.cap ?? 0.9999;
+      const cap = cl.cap ?? DISK_CLAMP_IN;
       if (r > cap) { const s = cap / r; c.re *= s; c.im *= s; }
       if (cl.minR !== undefined && r < cl.minR) {
         const s = cl.minR / Math.max(r, 1e-15);
         c.re *= s; c.im *= s;
       }
     } else if (cl.side === 'out') {
-      const cap = cl.cap ?? 1.0001;
+      const cap = cl.cap ?? DISK_CLAMP_OUT;
       if (r < cap) {
         const s = r > 1e-12 ? cap / r : cap;
         c.re *= s; c.im *= s;
@@ -864,6 +897,8 @@ const _exports = {
   Family, selectFamily, registerFamily,
   // Schema runtime — opt-in pack/unpack/clamp from declarative schema.
   packPhiBySchema, unpackPhiBySchema, applySchemaClamps,
+  // Named numeric constants.
+  ZERO_THRESHOLD, DISK_CLAMP_OUT, DISK_CLAMP_IN, Z0_MAX_RADIUS, DEFAULT_FD_EPS,
 };
 if (typeof window !== 'undefined') window.QD = _exports;
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;

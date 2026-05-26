@@ -25,14 +25,23 @@
          Tab panels are siblings below. The AQD tab is deferred to a future
          release; its source files live in app/disabled/aqd/. -->
     <div id="tab-bar" role="tablist">
-      <button class="tab-btn active" data-tab="qd"     role="tab" aria-selected="true">QD / LQD</button>
-      <button class="tab-btn"        data-tab="direct" role="tab" aria-selected="false">Direct problem</button>
+      <button class="tab-btn active" data-tab="qd"      role="tab" aria-selected="true">QD</button>
+      <button class="tab-btn"        data-tab="schwarz" role="tab" aria-selected="false">Schwarz dynamics</button>
+      <button class="tab-btn"        data-tab="param-slice" role="tab" aria-selected="false">Parameter slice</button>
     </div>
 
-    <!-- ============== TAB 1: QD / LQD (existing UI) ============== -->
+    <!-- ============== TAB 1: QD (inverse + direct, view-toggled) ============== -->
+    <!-- HANDOFF #30: the standalone "Direct problem" tab was folded into this
+         tab as an `inverse | direct` view-mode toggle. The toggle card is
+         injected by ui.js's mountViewToggle() at page-load; the inverse UI
+         (existing) is wrapped in #qd-inverse-content; the direct UI is mounted
+         lazily by QD.Direct._mountUI() into the relocated #controls-direct
+         element below. setViewMode() in ui.js drives the visibility swap. -->
     <div id="controls-qd" class="tab-panel active" role="tabpanel">
 
-    <section class="card">
+    <div id="qd-inverse-content">
+
+    <section class="card" id="domain-mode-card">
       <h2>Domain type</h2>
 
       <div class="domain-mode-group">
@@ -109,7 +118,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card" id="h-card">
       <h2>Quadrature function h(w)</h2>
       <div class="hint">
         h(w) = Σ<sub>j</sub> Σ<sub>s=1..m<sub>j</sub></sub> C<sub>j,s</sub> / (w − a<sub>j</sub>)<sup>s</sup>.
@@ -120,6 +129,21 @@
           <select id="preset-select" style="width: 240px;"></select>
         </label>
       </div>
+
+      <!-- Custom text input. Two-way coupled to the structured pole grid:
+           grid edits refresh the text; Parse rebuilds the grid from text.
+           Accepts expressions in `w` only, e.g. 1.5/w + 0.5/w^2 or
+           1/(w-2) + (1+i)/(w-2)^2 + 0.3*w^2 or 1/(w^2-1). -->
+      <div class="row" style="margin-bottom: 8px; align-items: stretch;">
+        <label style="flex:1; display:flex; align-items:center; gap:6px;">
+          h(w) =
+          <input type="text" id="h-text" style="flex:1; font-family: ui-monospace, Consolas, monospace;"
+                 placeholder="e.g. 1.5/w + 0.5/w^2 or 1/(w-2) + (1+i)/(w-2)^2">
+        </label>
+        <button id="h-parse" class="small" style="margin-left:6px;">Parse</button>
+      </div>
+      <div id="h-text-msg" class="hint" style="margin-bottom: 8px; min-height: 1em; color: #b53030;"></div>
+
       <div id="poles-list"></div>
       <button id="add-pole" class="small">+ Add pole</button>
 
@@ -173,7 +197,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card" id="solver-settings-card">
       <h2>Solver settings</h2>
       <div class="row">
         <label>Boundary samples:
@@ -199,6 +223,11 @@
             <option value="polya">Pólya field   h̄(w)</option>
             <option value="external" id="vf-external-opt">External field   w − h̄(w)</option>
           </select>
+        </label>
+      </div>
+      <div class="row">
+        <label title="Plot the w-plane images of {z : φ'(z) = 0}. Critical points inside the relevant disk (𝔻 for bounded, 𝔻* for unbounded) predict univalence loss; those near |z|=1 predict imminent degeneracy.">
+          <input type="checkbox" id="critical-set-toggle"> Critical-set image (zeros of φ′)
         </label>
       </div>
     </section>
@@ -308,11 +337,13 @@
       <div id="alternates-list"></div>
     </section>
 
-    </div><!-- /#controls-qd -->
+    </div><!-- /#qd-inverse-content -->
 
-    <!-- ============== TAB 2: Direct problem (given φ → h) ============== -->
-    <!-- Populated lazily by direct-ui.js on first tab activation. -->
-    <div id="controls-direct" class="tab-panel" role="tabpanel" hidden>
+    <!-- Direct UI (HANDOFF #30): the former "Direct problem" tab is now
+         a view-mode toggle within the QD tab. The placeholder card below
+         is replaced by QD.Direct._mountUI() on first switch to direct
+         view; initial visibility is controlled by ui.js's setViewMode(). -->
+    <div id="controls-direct" style="display:none;">
       <section class="card">
         <h2>Direct problem</h2>
         <div class="hint">
@@ -324,6 +355,33 @@
         </div>
       </section>
     </div><!-- /#controls-direct -->
+
+    </div><!-- /#controls-qd -->
+
+    <!-- ============== TAB 2: Schwarz dynamics ============== -->
+    <!-- Populated lazily by schwarz/schwarz-ui.js on first tab activation. -->
+    <div id="controls-schwarz" class="tab-panel" role="tabpanel" hidden>
+      <section class="card">
+        <h2>Schwarz reflection dynamics</h2>
+        <div class="hint">
+          For a Riemann map <code>φ : 𝔻 → Ω</code>, the Schwarz reflection
+          <code>σ(w) = conj(F(ψ(w)))</code> is anti-meromorphic in Ω and fixes
+          <code>∂Ω</code>. This tab colors each <code>w ∈ Ω</code> by the
+          smallest <code>n</code> for which <code>σⁿ(w) ∈ Ω^c</code> (the
+          "fundamental tile"). Points whose orbit diverges to ∞ before
+          re-entering <code>Ω^c</code> are flagged as the escaping set.
+        </div>
+      </section>
+    </div><!-- /#controls-schwarz -->
+
+    <!-- ============== TAB 3: Parameter slice ============== -->
+    <!-- Populated lazily by param-slice/param-slice-ui.js on first tab activation. -->
+    <div id="controls-param-slice" class="tab-panel" role="tabpanel" hidden></div>
+
+    <!-- NOTE (HANDOFF #29): the standalone Riemann-sphere tab was folded
+         into the Schwarz dynamics tab as a "plane | sphere" view toggle.
+         Sphere-specific UI is mounted via QD.SphereView on first switch to
+         sphere mode; see app/sphere/sphere-ui.js. -->
   </aside>
 
   <!-- ============== RIGHT: PLOT ============== -->
@@ -350,13 +408,31 @@
 <script src="solver-lqd-singular.js"></script>   <!-- Bounded singular LQDs (Family.boundedLQD_singular) -->
 <script src="solver-uqd-lqd.js"></script>        <!-- Unbounded non-singular LQDs (Family.unboundedLQD) -->
 <script src="solver-uqd-lqd-singular.js"></script><!-- Unbounded singular LQDs (Family.unboundedLQD_singular) -->
+<script src="parse-h.js"></script>               <!-- Custom-text h(w) parser (QD.parseH / QD.formatH) -->
+<script src="critical-set.js"></script>           <!-- QD.findCriticalPoints — zeros of φ' -->
 
 <!-- ============== Direct-problem (φ → h) ============== -->
 <script src="direct/direct-common.js"></script>   <!-- QD.Direct math kernel -->
 
+<!-- ============== Schwarz dynamics (σⁿ visualization) ============== -->
+<script src="schwarz/schwarz-common.js"></script>  <!-- QD.Schwarz math kernel -->
+<script src="schwarz/schwarz-webgl.js"></script>   <!-- WebGL 2 GPU renderer (optional) -->
+
+<!-- ============== Parameter-slice cartography (sweep h-parameters) ============== -->
+<script src="param-slice/param-slice-common.js"></script>  <!-- pure math kernel -->
+<script src="param-slice/param-slice-pool.js"></script>    <!-- Web Worker pool + Blob bundler -->
+
 <!-- Frontend UI -->
+<script src="qol.js"></script>                  <!-- QD.QoL: help buttons, hover tooltips, copy (HANDOFF #33) -->
 <script src="ui.js"></script>
 <script src="direct/direct-ui.js"></script>   <!-- Direct-tab UI (mounts on tab activation) -->
+<script src="schwarz/schwarz-ui.js"></script> <!-- Schwarz-tab UI (mounts on tab activation) -->
+<script src="param-slice/param-slice-ui.js"></script>   <!-- Parameter-slice-tab UI (mounts on tab activation) -->
+
+<!-- ============== Riemann-sphere view (stereographic Schwarz fractal) ============== -->
+<script src="sphere/sphere-common.js"></script>   <!-- pure math kernel (SphereCommon) -->
+<script src="sphere/sphere-webgl.js"></script>    <!-- WebGL 2 renderer (QD.Sphere.createRenderer) -->
+<script src="sphere/sphere-ui.js"></script>       <!-- QD.SphereView adapter (mounted by the Schwarz tab; HANDOFF #29) -->
 
 <!-- Tab switching: minimal, no framework. Each .tab-btn toggles which
      .tab-panel is visible. The plot canvas is shared; ui.js owns it for
@@ -365,9 +441,14 @@
 (function () {
   'use strict';
   const tabs = document.querySelectorAll('.tab-btn');
+  // HANDOFF #29: the Riemann-sphere tab was folded into the Schwarz tab
+  // as a view-mode toggle, so the 'sphere' entry is gone here. Null-guard
+  // each panel lookup defensively so a missing element can't break tab
+  // switching for unrelated tabs.
   const panels = {
-    qd:     document.getElementById('controls-qd'),
-    direct: document.getElementById('controls-direct'),
+    qd:           document.getElementById('controls-qd'),
+    schwarz:      document.getElementById('controls-schwarz'),
+    'param-slice': document.getElementById('controls-param-slice'),
   };
   function activate(tabId) {
     tabs.forEach(t => {
@@ -376,6 +457,7 @@
       t.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     Object.entries(panels).forEach(([id, el]) => {
+      if (!el) return;
       const on = id === tabId;
       el.classList.toggle('active', on);
       el.hidden = !on;

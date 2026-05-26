@@ -21,6 +21,29 @@ const Complex = {
   scale(a, s) { return {re: a.re*s, im: a.im*s}; },
   conj(a)   { return {re: a.re, im: -a.im}; },
 
+  // In-place arithmetic variants. Write the result into a caller-supplied
+  // `out` object instead of allocating a fresh {re,im}. Use in tight inner
+  // loops (per-pixel solver, branch sums) to remove allocator + GC pressure.
+  // SAFE TO ALIAS: `out` may be the same object as `a` or `b`.
+  //
+  // The functional variants above stay for readability; these are an
+  // additive perf-only API — callers opt in.
+  mulInto(a, b, out) {
+    const re = a.re*b.re - a.im*b.im;
+    out.im   = a.re*b.im + a.im*b.re;
+    out.re   = re;
+    return out;
+  },
+  addInto(a, b, out) { out.re = a.re + b.re; out.im = a.im + b.im; return out; },
+  subInto(a, b, out) { out.re = a.re - b.re; out.im = a.im - b.im; return out; },
+  scaleInto(a, s, out) { out.re = a.re*s; out.im = a.im*s; return out; },
+  // Accumulator: out += a*b (used for residual / branch-sum kernels).
+  addMulInto(a, b, out) {
+    out.re += a.re*b.re - a.im*b.im;
+    out.im += a.re*b.im + a.im*b.re;
+    return out;
+  },
+
   inv(a) {
     const d = a.re*a.re + a.im*a.im;
     if (d === 0) throw new Error("Complex.inv: division by zero");

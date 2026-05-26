@@ -474,7 +474,7 @@
         const n = hData.poles.length;
         w0 = n > 0 ? { re: sumRe / n, im: sumIm / n } : { re: 1, im: 0 };
       }
-      if (Complex.abs2(w0) < 1e-20) {
+      if (Complex.abs2(w0) < QD.ZERO_THRESHOLD) {
         throw new Error("Family.boundedLQD: w₀ = φ(0) must be nonzero (0 ∉ Ω̄ required)");
       }
       return { lqd: true, w0 };

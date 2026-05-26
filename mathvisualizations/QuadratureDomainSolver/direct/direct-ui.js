@@ -11,7 +11,7 @@
 //      diagnostic.
 //
 // Each mode pushes:
-//   • h to QD.Direct._sendHToInverseTab     (pre-fill QD/LQD tab and switch)
+//   • h to QD.Direct._sendHToInverseTab     (pre-fill QD tab inverse view and switch)
 //   • ∂Ω points to QD.Direct._setPlotBoundary   (live boundary preview)
 // Both hooks are installed by ui.js after DOMContentLoaded. If the hooks
 // aren't installed yet (race), we no-op and re-try on tab swap.
@@ -87,16 +87,29 @@
   ];
 
   // ---------------------------------------------------------------------------
-  // Lazy mount on first tab activation
+  // Mount API (HANDOFF #30): the Direct UI is no longer a stand-alone tab.
+  // It's mounted into a sub-container of the QD tab and activated by ui.js's
+  // setViewMode('direct'). The host calls QD.Direct._mountUI() on the first
+  // switch to direct view (idempotent) and QD.Direct._activate() each time
+  // the user toggles back to direct view (re-pushes φ boundary to the canvas).
   // ---------------------------------------------------------------------------
   let mounted = false;
-  document.addEventListener('tab-changed', function (e) {
-    if (e.detail && e.detail.tab === 'direct') {
-      if (!mounted) { mountDirectSidebar(); mounted = true; }
-      // Push the current ∂Ω to the canvas every time we switch in.
-      recomputeAndRender();
-    }
-  });
+  function _mountUI() {
+    if (mounted) return;
+    mountDirectSidebar();
+    mounted = true;
+  }
+  function _activate() {
+    if (!mounted) return;
+    recomputeAndRender();
+  }
+  // Expose on the QD.Direct namespace (created by direct-common.js, populated
+  // here at script-evaluation time so ui.js can call without a load-order race).
+  if (typeof QD !== 'undefined') {
+    QD.Direct = QD.Direct || {};
+    QD.Direct._mountUI   = _mountUI;
+    QD.Direct._activate  = _activate;
+  }
 
   function mountDirectSidebar() {
     const root = document.getElementById('controls-direct');
@@ -108,6 +121,33 @@
     root.appendChild(makePhiCardNumerical());    // initially hidden
     root.appendChild(makeOutputCard());
     applyModeVisibility();
+    attachDirectHelp();      // HANDOFF #33
+  }
+
+  function attachDirectHelp() {
+    if (!window.QD || !window.QD.QoL || !window.QD.QoL.attachHelp) return;
+    const H = window.QD.QoL.attachHelp;
+    const root = document.getElementById('controls-direct');
+    if (!root) return;
+    const cards = root.querySelectorAll('section.card');
+    if (cards[0]) H(cards[0].querySelector('h2'),
+      `<b>Domain type.</b> Bounded: φ(z) is a polynomial mapping 𝔻 → Ω.
+       Unbounded: φ(z) = c·z + lower-order terms mapping 𝔻* → Ω. Numerical:
+       paste any analytic-in-𝔻 expression; the kernel infers an order-N
+       polynomial via DFT and reports a non-analyticity diagnostic.`);
+    // Three φ cards (only one visible at a time) all get the same help.
+    for (let i = 1; i <= 3; i++) {
+      if (cards[i]) H(cards[i].querySelector('h2'),
+        `<b>Riemann map φ(z).</b> Edit coefficients (or paste a math.js
+         expression). The Direct kernel computes the explicit
+         quadrature data h(w) such that ∮<sub>∂Ω</sub> f h dw = ∮<sub>∂Ω</sub>
+         f dψ for analytic test functions f.`);
+    }
+    if (cards[4]) H(cards[4].querySelector('h2'),
+      `<b>Output h(w).</b> The computed quadrature data, with a copy
+       button and a "Send to inverse" affordance that pushes the data
+       into the QD tab and runs the inverse solver — verifies the
+       direct kernel by round-tripping.`);
   }
 
   function applyModeVisibility() {
@@ -719,7 +759,7 @@
         : { unbounded: false };
       hook(directState.lastH, opts);
       msg.style.color = '#2a8f2a';
-      msg.textContent = 'Sent. Switched to QD/LQD tab.';
+      msg.textContent = 'Sent. Switched to inverse view.';
     });
 
     // ---- Verify button: round-trip via the inverse solver. ----

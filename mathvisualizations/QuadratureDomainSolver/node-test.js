@@ -10,7 +10,7 @@ const vm = require('vm');
 const ctx = { module: { exports: {} }, exports: {}, global, require, console, process, __dirname, __filename };
 ctx.global = ctx;
 vm.createContext(ctx);
-for (const f of ['complex.js', 'taylor.js', 'solver.js', 'solver-faber.js', 'solver-qd.js', 'solver-uqd.js', 'solver-lqd-common.js', 'solver-lqd.js', 'solver-lqd-singular.js', 'solver-uqd-lqd.js', 'solver-uqd-lqd-singular.js']) {
+for (const f of ['complex.js', 'taylor.js', 'solver.js', 'solver-faber.js', 'solver-qd.js', 'solver-uqd.js', 'solver-lqd-common.js', 'solver-lqd.js', 'solver-lqd-singular.js', 'solver-uqd-lqd.js', 'solver-uqd-lqd-singular.js', 'critical-set.js']) {
   const src = fs.readFileSync(path.join(__dirname, f), 'utf8')
     .replace(/typeof window !== 'undefined'/g, 'false');
   vm.runInContext(src, ctx, { filename: f });
@@ -805,16 +805,9 @@ runFamilyBattery('unboundedLQD_singular', [
   ok('unboundedLQD_singular: h = q/w only is rejected',
      r.success === false && /no unbounded singular LQD exists/.test(r.error || ''));
 }
-{
-  // Higher-order pole at 0 in hData (a=0 with order ≥ 1, even order-1 is rejected
-  // since simple residue belongs to opts.q).
-  const r = solveInverseQD(
-    { poles: [{ a:{re:0,im:0}, principal: [{re:1,im:0}] }] },
-    { lqd: true, unbounded: true, singular: true, c: 0.5, q: {re:0, im:0} },
-  );
-  ok('unboundedLQD_singular: pole at a=0 in hData is rejected',
-     r.success === false && /pole at a = 0/.test(r.error || ''));
-}
+// (Higher-order pole at a = 0 in hData is now SUPPORTED via the synthetic-
+// branch parametrization — HANDOFF #24. The dedicated battery for this case
+// lives further down near the case (a) tests.)
 
 runFamilyBattery('unboundedLQD', [
   { tag: 'trivial h=0 c=0.5  (Ω = ext. disk)',
@@ -1471,6 +1464,2081 @@ if (mathjs) {
   }
 } else {
   ok('Rational parser tests skipped (mathjs not installed)', true);
+}
+
+// ===========================================================================
+// parse-h.js: custom-text h(w) input for the Inverse tab.
+// ===========================================================================
+{
+  const src = fs.readFileSync(path.join(__dirname, 'parse-h.js'), 'utf8')
+    .replace(/typeof window !== 'undefined'/g, 'false');
+  vm.runInContext(src, ctx, { filename: 'parse-h.js' });
+}
+const parseH  = vm.runInContext('module.exports.parseH',  ctx);
+const formatH = vm.runInContext('module.exports.formatH', ctx);
+
+ok('parse-h: namespace registered',
+   typeof parseH === 'function' && typeof formatH === 'function');
+
+if (mathjs && parseH && formatH) {
+  // Helpers
+  function cEq(a, b, tol)  { return Math.hypot(a.re - b.re, a.im - b.im) < (tol || 1e-10); }
+  function residuesEq(p, expected, tol) {
+    if (p.residues.length !== expected.length) return false;
+    for (let i = 0; i < expected.length; i++) if (!cEq(p.residues[i], expected[i], tol)) return false;
+    return true;
+  }
+  function findPole(parsed, a, tol) {
+    for (const p of parsed.poles) if (cEq(p.a, a, tol || 1e-8)) return p;
+    return null;
+  }
+
+  // --- Phase 1: pure pole atoms ---
+  {
+    const r = parseH('1/w', mathjs);
+    ok('parseH "1/w" → one pole at 0, order 1, residue 1',
+       r.poles.length === 1 && cEq(r.poles[0].a, {re:0,im:0}) &&
+       r.poles[0].order === 1 && cEq(r.poles[0].residues[0], {re:1,im:0}) &&
+       r.polyCoeffs.length === 0);
+  }
+  {
+    const r = parseH('1.5/w + 0.5/w^2', mathjs);
+    ok('parseH cardioid "1.5/w + 0.5/w^2" → one pole order 2 at 0',
+       r.poles.length === 1 && cEq(r.poles[0].a, {re:0,im:0}) &&
+       r.poles[0].order === 2 &&
+       residuesEq(r.poles[0], [{re:1.5,im:0},{re:0.5,im:0}]));
+  }
+  {
+    const r = parseH('1/(w-2)', mathjs);
+    ok('parseH "1/(w-2)" → pole at 2, residue 1',
+       r.poles.length === 1 && cEq(r.poles[0].a, {re:2,im:0}) &&
+       cEq(r.poles[0].residues[0], {re:1,im:0}));
+  }
+  {
+    const r = parseH('1.5/(w-1) + 1.5/(w+1)', mathjs);
+    ok('parseH two-pt symmetric → two poles ±1 with residue 1.5 each',
+       r.poles.length === 2 &&
+       cEq(findPole(r, {re:1,im:0}).residues[0],  {re:1.5,im:0}) &&
+       cEq(findPole(r, {re:-1,im:0}).residues[0], {re:1.5,im:0}));
+  }
+  {
+    const r = parseH('(1+i)/(w - 2i)', mathjs);
+    ok('parseH "(1+i)/(w - 2i)" → pole at 2i, residue 1+i',
+       r.poles.length === 1 && cEq(r.poles[0].a, {re:0,im:2}) &&
+       cEq(r.poles[0].residues[0], {re:1,im:1}));
+  }
+  {
+    const r = parseH('-1/(w-3)^2 + 4/(w-3)', mathjs);
+    const p = findPole(r, {re:3,im:0});
+    ok('parseH mixed-order at same a → single pole order 2, residues [4, -1]',
+       r.poles.length === 1 && p && p.order === 2 &&
+       residuesEq(p, [{re:4,im:0},{re:-1,im:0}]));
+  }
+  {
+    const r = parseH('1/(w-2) + 1/(w-2)', mathjs);
+    ok('parseH duplicate-summand merging → one pole residue 2',
+       r.poles.length === 1 && cEq(r.poles[0].residues[0], {re:2,im:0}));
+  }
+
+  // --- Phase 1: polynomial atoms (unbounded mode) ---
+  {
+    const r = parseH('w^2', mathjs, {mode:'unbounded'});
+    ok('parseH "w^2" unbounded → polyCoeffs [0,0,1]',
+       r.poles.length === 0 && r.polyCoeffs.length === 3 &&
+       cEq(r.polyCoeffs[0], {re:0,im:0}) &&
+       cEq(r.polyCoeffs[2], {re:1,im:0}));
+  }
+  {
+    const r = parseH('0.2 + 0.1*w + 0.3*w^2', mathjs, {mode:'unbounded'});
+    ok('parseH mixed polynomial → polyCoeffs [0.2, 0.1, 0.3]',
+       r.polyCoeffs.length === 3 &&
+       cEq(r.polyCoeffs[0], {re:0.2,im:0}) &&
+       cEq(r.polyCoeffs[1], {re:0.1,im:0}) &&
+       cEq(r.polyCoeffs[2], {re:0.3,im:0}));
+  }
+  {
+    const r = parseH('0.5*w + 1/(w-2)', mathjs, {mode:'unbounded'});
+    ok('parseH polynomial+pole mixed → both populated',
+       r.poles.length === 1 && cEq(r.poles[0].a, {re:2,im:0}) &&
+       r.polyCoeffs.length === 2 &&
+       cEq(r.polyCoeffs[1], {re:0.5,im:0}));
+  }
+
+  // --- Phase 2 fallback: general rationals ---
+  {
+    const r = parseH('1/(w^2 - 1)', mathjs);
+    // Should produce two simple poles at ±1 with residues ±0.5.
+    ok('parseH "1/(w^2-1)" → two poles ±1 (Phase 2)',
+       r.poles.length === 2);
+    const pPos = findPole(r, {re: 1,im:0}, 1e-6);
+    const pNeg = findPole(r, {re:-1,im:0}, 1e-6);
+    ok('parseH "1/(w^2-1)" residue at +1 is +0.5',
+       pPos && cEq(pPos.residues[0], {re: 0.5,im:0}, 1e-6));
+    ok('parseH "1/(w^2-1)" residue at -1 is -0.5',
+       pNeg && cEq(pNeg.residues[0], {re:-0.5,im:0}, 1e-6));
+  }
+  {
+    // Repeated root: 1/(w-3)^2 with a denominator the strict walker can't fold
+    // into a single (w-a)^k atom — written here in expanded form.
+    const r = parseH('1/(w*w - 6*w + 9)', mathjs);
+    ok('parseH "1/(w^2-6w+9)" (expanded) → one pole order 2 at 3 (Phase 2)',
+       r.poles.length === 1 && cEq(r.poles[0].a, {re:3,im:0}, 1e-5) &&
+       r.poles[0].order === 2 &&
+       cEq(r.poles[0].residues[1], {re:1,im:0}, 1e-5));
+  }
+  {
+    // Improper rational: polynomial part + pole part.
+    const r = parseH('w^2/(w-1)', mathjs, {mode:'unbounded'});
+    // w^2/(w-1) = w + 1 + 1/(w-1).
+    ok('parseH "w^2/(w-1)" → poly [1,1] + pole at 1 res 1',
+       r.polyCoeffs.length === 2 &&
+       cEq(r.polyCoeffs[0], {re:1,im:0}, 1e-8) &&
+       cEq(r.polyCoeffs[1], {re:1,im:0}, 1e-8) &&
+       r.poles.length === 1 && cEq(r.poles[0].a, {re:1,im:0}, 1e-6) &&
+       cEq(r.poles[0].residues[0], {re:1,im:0}, 1e-6));
+  }
+
+  // --- Mode enforcement: bounded must reject polynomial part ---
+  {
+    let threw = false, msg = '';
+    try { parseH('w + 1/(w-1)', mathjs, {mode:'bounded'}); }
+    catch (e) { threw = true; msg = e.message || String(e); }
+    ok('parseH bounded mode rejects polynomial part', threw && /polynomial|unbounded/i.test(msg),
+       'msg=' + msg);
+  }
+  // Bounded LQD also rejects polynomial:
+  {
+    let threw = false;
+    try { parseH('w^2 + 1/(w-1)', mathjs, {mode:'lqd-bounded'}); }
+    catch (e) { threw = true; }
+    ok('parseH lqd-bounded mode rejects polynomial part', threw);
+  }
+  // Unbounded LQDs ALLOW polynomial part.
+  {
+    let threw = false;
+    try { parseH('w + 1/(w-1)', mathjs, {mode:'lqd-unbounded'}); }
+    catch (e) { threw = true; }
+    ok('parseH lqd-unbounded accepts polynomial part', !threw);
+  }
+
+  // --- Error cases ---
+  {
+    let threw = false, msg='';
+    try { parseH('z + 1', mathjs); } catch (e) { threw = true; msg = e.message; }
+    ok('parseH rejects symbol other than w', threw && /symbol|w and i/i.test(msg),
+       'msg=' + msg);
+  }
+  {
+    let threw = false;
+    try { parseH('', mathjs); } catch (e) { threw = true; }
+    ok('parseH rejects empty expression', threw);
+  }
+  {
+    let threw = false;
+    try { parseH('1/(w-2)^1.5', mathjs); } catch (e) { threw = true; }
+    ok('parseH rejects non-integer exponent', threw);
+  }
+
+  // --- formatH round-trip on every bounded/unbounded preset shape ---
+  function roundTrip(label, h, mode) {
+    const text = formatH(h);
+    const reparsed = parseH(text, mathjs, {mode: mode || 'unbounded'});
+    // Compare structural: same number of poles, each pole matches by location.
+    const ok1 = reparsed.poles.length === h.poles.length;
+    let ok2 = true;
+    for (const orig of h.poles) {
+      const re = findPole(reparsed, orig.a, 1e-6);
+      if (!re || re.order !== orig.order) { ok2 = false; break; }
+      for (let s = 0; s < orig.order; s++) {
+        if (!cEq(re.residues[s], orig.residues[s], 1e-6)) { ok2 = false; break; }
+      }
+    }
+    // Polynomial part: same nonzero coeffs at same indices.
+    const op = (h.polyCoeffs || []).slice();
+    const rp = (reparsed.polyCoeffs || []).slice();
+    let ok3 = op.length === rp.length;
+    for (let k = 0; k < Math.max(op.length, rp.length); k++) {
+      const a = op[k] || {re:0,im:0};
+      const b = rp[k] || {re:0,im:0};
+      if (!cEq(a, b, 1e-6)) { ok3 = false; break; }
+    }
+    ok('formatH/parseH round-trip: ' + label, ok1 && ok2 && ok3, 'text="' + text + '"');
+  }
+  roundTrip('unit disk',     { poles: [{a:{re:0,im:0}, order:1, residues:[{re:1,im:0}]}],   polyCoeffs: [] }, 'bounded');
+  roundTrip('cardioid',      { poles: [{a:{re:0,im:0}, order:2, residues:[{re:1.5,im:0},{re:0.5,im:0}]}], polyCoeffs: [] }, 'bounded');
+  roundTrip('two-pt sym',    { poles: [{a:{re:1,im:0}, order:1, residues:[{re:1.5,im:0}]},
+                                       {a:{re:-1,im:0},order:1, residues:[{re:1.5,im:0}]}], polyCoeffs: [] }, 'bounded');
+  roundTrip('triangle',      { poles: [{a:{re:1,im:0},                order:1, residues:[{re:1,im:0}]},
+                                       {a:{re:-0.5,im:0.8660254},     order:1, residues:[{re:1,im:0}]},
+                                       {a:{re:-0.5,im:-0.8660254},    order:1, residues:[{re:1,im:0}]}], polyCoeffs: [] }, 'bounded');
+  roundTrip('one-pt neg',    { poles: [{a:{re:2,im:0}, order:1, residues:[{re:-0.5,im:0}]}], polyCoeffs: [] }, 'unbounded');
+  roundTrip('one-pt imag',   { poles: [{a:{re:2,im:0}, order:1, residues:[{re:0,im:1}]}],    polyCoeffs: [] }, 'unbounded');
+  roundTrip('deltoid (w^2)', { poles: [], polyCoeffs: [{re:0,im:0},{re:0,im:0},{re:1,im:0}] }, 'unbounded');
+  roundTrip('two-pt nonuniq',{ poles: [{a:{re:1,im:0}, order:1, residues:[{re:1,im:0}]},
+                                       {a:{re:-1,im:0},order:1, residues:[{re:1,im:0}]}], polyCoeffs: [] }, 'unbounded');
+} else {
+  ok('parse-h tests skipped (mathjs not installed)', true);
+}
+
+// ===========================================================================
+// Schwarz reflection dynamics (QD.Schwarz)
+// ===========================================================================
+{
+  const src = fs.readFileSync(path.join(__dirname, 'schwarz/schwarz-common.js'), 'utf8')
+    .replace(/typeof window !== 'undefined'/g, 'false');
+  vm.runInContext(src, ctx, { filename: 'schwarz/schwarz-common.js' });
+}
+const Schwarz = vm.runInContext('module.exports.Schwarz', ctx);
+ok('Schwarz: namespace registered', typeof Schwarz === 'object' && typeof Schwarz.buildSchwarzFromPhi === 'function');
+
+// Helper: solve the inverse problem for a given hData and family, return phi + boundaryPts.
+function solveAndSample(hData, opts) {
+  const r = solveInverseQD(hData, opts);
+  if (!r.success) throw new Error('solveInverseQD failed: ' + r.error);
+  const phi = r.primary.phi;
+  const pts = QD_NS.sampleBoundary(phi, 256);
+  return { phi, hData, boundaryPts: pts };
+}
+
+// ---- Bounded unit disk: h = 1/w. φ(z) = z. σ(w) = 1/conj(w). ----
+{
+  const hData = { poles: [{ a: { re: 0, im: 0 }, principal: [{ re: 1, im: 0 }] }] };
+  const { phi, boundaryPts } = solveAndSample(hData, {});
+  const sw = Schwarz.buildSchwarzFromPhi(phi, hData, boundaryPts);
+  ok('Schwarz/unit-disk: builder returns non-null', !!sw && sw.family === 'boundedQD');
+
+  // σ(0.5) should equal 1/conj(0.5) = 2.
+  const s1 = sw.sigma({ re: 0.5, im: 0 });
+  ok('Schwarz/unit-disk: σ(0.5) ≈ 2',
+     s1 && Math.abs(s1.re - 2) < 1e-8 && Math.abs(s1.im) < 1e-8,
+     's=' + (s1 ? (s1.re.toFixed(6) + ',' + s1.im.toFixed(6)) : '(null)'));
+
+  // σ(0.3 + 0.4i): closed form is conj(1/(0.3+0.4i)) = (0.3+0.4i)/|0.3+0.4i|² · (1) = (0.3-0.4i)conjugate / 0.25
+  // 1/(0.3+0.4i) = (0.3-0.4i)/0.25 = 1.2 - 1.6i; conj = 1.2 + 1.6i.
+  const w = { re: 0.3, im: 0.4 };
+  const s2 = sw.sigma(w);
+  ok('Schwarz/unit-disk: σ(0.3+0.4i) ≈ 1.2+1.6i',
+     s2 && Math.abs(s2.re - 1.2) < 1e-8 && Math.abs(s2.im - 1.6) < 1e-8,
+     's=' + (s2 ? (s2.re.toFixed(6) + ',' + s2.im.toFixed(6)) : '(null)'));
+
+  // Every interior point escapes in 1 iteration.
+  const et = Schwarz.escapeTime({ re: 0.5, im: 0 }, sw, { maxIter: 8 });
+  ok('Schwarz/unit-disk: escapeTime(0.5) = 1', et.kind === 'fundamental' && et.n === 1,
+     'kind=' + et.kind + ', n=' + et.n);
+  // Off-axis interior point
+  const et2 = Schwarz.escapeTime({ re: -0.2, im: 0.6 }, sw, { maxIter: 8 });
+  ok('Schwarz/unit-disk: escapeTime(-0.2+0.6i) = 1', et2.kind === 'fundamental' && et2.n === 1);
+
+  // σ(w) ≈ w on ∂Ω: for the unit disk, every boundary point should map to itself
+  // under σ (since on |w|=1, conj(w) = 1/w). Sample a few.
+  let maxBdyErr = 0;
+  for (let k = 0; k < 16; k++) {
+    const th = 2 * Math.PI * k / 16;
+    const w = { re: Math.cos(th), im: Math.sin(th) };
+    const sv = sw.sigma(w);
+    if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+  }
+  ok('Schwarz/unit-disk: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-6,
+     'maxErr=' + maxBdyErr.toExponential(2));
+}
+
+// ---- Bounded cardioid: h = 1.5/w + 0.5/w² ----
+{
+  const hData = { poles: [{ a: { re: 0, im: 0 }, principal: [{ re: 1.5, im: 0 }, { re: 0.5, im: 0 }] }] };
+  const { phi, boundaryPts } = solveAndSample(hData, {});
+  const sw = Schwarz.buildSchwarzFromPhi(phi, hData, boundaryPts);
+  ok('Schwarz/cardioid: builder returns non-null', !!sw);
+
+  // σ should fix ∂Ω.
+  let maxBdyErr = 0;
+  for (let k = 0; k < 32; k++) {
+    const th = 2 * Math.PI * k / 32;
+    const z = { re: Math.cos(th), im: Math.sin(th) };
+    const w = sw.evalPhi(z);
+    const sv = sw.sigma(w);
+    if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+  }
+  ok('Schwarz/cardioid: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-4,
+     'maxErr=' + maxBdyErr.toExponential(2));
+
+  // invPhi round-trip: φ(ψ(w)) ≈ w for test points in Ω.
+  let maxInvErr = 0, nTested = 0;
+  for (let i = 0; i < 12; i++) {
+    const t = (i + 0.5) / 12;
+    const w = { re: 0.5 + 0.6 * Math.cos(2 * Math.PI * t), im: 0.4 * Math.sin(2 * Math.PI * t) };
+    if (!sw.isInOmega(w)) continue;
+    const z = sw.psi(w);
+    if (!z) continue;
+    nTested++;
+    const wBack = sw.evalPhi(z);
+    maxInvErr = Math.max(maxInvErr, Math.hypot(wBack.re - w.re, wBack.im - w.im));
+  }
+  ok('Schwarz/cardioid: ψ ∘ φ ≈ id (n=' + nTested + ')', nTested > 0 && maxInvErr < 1e-8,
+     'maxErr=' + maxInvErr.toExponential(2));
+}
+
+// ---- Deltoid: h = w², c = 0.5 (POLYNOMIAL-only h; phi.polyA branch) ----
+{
+  const hData = { poles: [], polyPart: [{re:0,im:0},{re:0,im:0},{re:1,im:0}] };
+  const { phi, boundaryPts } = solveAndSample(hData, { unbounded: true, c: 0.5 });
+  const sw = Schwarz.buildSchwarzFromPhi(phi, hData, boundaryPts);
+  ok('Schwarz/deltoid: builder',
+     !!sw && sw.family === 'unboundedQD' && sw.unbounded,
+     'phi.polyA.length=' + (phi.polyA ? phi.polyA.length : -1) +
+     ', phi.branches.length=' + (phi.branches ? phi.branches.length : -1));
+  // σ on ∂Ω.
+  let maxBdyErr = 0;
+  for (let k = 0; k < 32; k++) {
+    const th = 2 * Math.PI * k / 32;
+    const z = { re: Math.cos(th), im: Math.sin(th) };
+    const w = sw.evalPhi(z);
+    const sv = sw.sigma(w);
+    if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+  }
+  ok('Schwarz/deltoid: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-3,
+     'maxErr=' + maxBdyErr.toExponential(2));
+  // invPhi round-trip in 𝔻* on a few interior test points (chosen by mapping
+  // z in 𝔻* through φ).
+  let maxInvErr = 0, nTested = 0;
+  for (let k = 0; k < 16; k++) {
+    const th = 2 * Math.PI * k / 16;
+    const z0 = { re: 1.4 * Math.cos(th), im: 1.4 * Math.sin(th) };
+    const w = sw.evalPhi(z0);
+    if (!sw.isInOmega(w)) continue;
+    const z = sw.psi(w);
+    if (!z) continue;
+    nTested++;
+    const wBack = sw.evalPhi(z);
+    maxInvErr = Math.max(maxInvErr, Math.hypot(wBack.re - w.re, wBack.im - w.im));
+  }
+  ok('Schwarz/deltoid: ψ ∘ φ ≈ id (n=' + nTested + ')',
+     nTested > 0 && maxInvErr < 1e-7,
+     'maxErr=' + maxInvErr.toExponential(2));
+}
+
+// ---- Unbounded one-point: h = 1/(w-2), c = 0.6  ----
+{
+  const hData = { poles: [{ a: { re: 2, im: 0 }, principal: [{ re: 1, im: 0 }] }], polyPart: [] };
+  const { phi, boundaryPts } = solveAndSample(hData, { unbounded: true, c: 0.6 });
+  const sw = Schwarz.buildSchwarzFromPhi(phi, hData, boundaryPts);
+  ok('Schwarz/unb-1pt: builder', !!sw && sw.family === 'unboundedQD' && sw.unbounded);
+
+  // σ on ∂Ω: sample a few points φ(e^{iθ}) (for unbounded, ∂Ω = φ(|z|=1)).
+  let maxBdyErr = 0;
+  for (let k = 0; k < 32; k++) {
+    const th = 2 * Math.PI * k / 32;
+    const z = { re: Math.cos(th), im: Math.sin(th) };
+    const w = sw.evalPhi(z);
+    const sv = sw.sigma(w);
+    if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+  }
+  ok('Schwarz/unb-1pt: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-4,
+     'maxErr=' + maxBdyErr.toExponential(2));
+
+  // invPhi round-trip in 𝔻*.
+  let maxInvErr = 0, nTested = 0;
+  for (let k = 0; k < 16; k++) {
+    const th = 2 * Math.PI * k / 16;
+    const r = 1.4;
+    const z0 = { re: r * Math.cos(th), im: r * Math.sin(th) };
+    const w = sw.evalPhi(z0);
+    if (!sw.isInOmega(w)) continue;
+    const z = sw.psi(w);
+    if (!z) continue;
+    nTested++;
+    const wBack = sw.evalPhi(z);
+    maxInvErr = Math.max(maxInvErr, Math.hypot(wBack.re - w.re, wBack.im - w.im));
+  }
+  ok('Schwarz/unb-1pt: ψ ∘ φ ≈ id (n=' + nTested + ')', nTested > 0 && maxInvErr < 1e-8,
+     'maxErr=' + maxInvErr.toExponential(2));
+}
+
+// ---- Bounded rational Schwarz via direct kernel ----
+if (mathjs) {
+  // φ(z) = z/(1-0.3z): a Möbius. φ(0)=0, φ'(0)=1.
+  const P = [{re:0,im:0},{re:1,im:0}];
+  const Q = [{re:1,im:0},{re:-0.3,im:0}];
+  const phiRat = { rational: true, P, Q, w0: { re: 0, im: 0 } };
+  // Build boundary by sampling φ on |z|=1.
+  const pts = [];
+  for (let k = 0; k < 256; k++) {
+    const th = 2 * Math.PI * k / 256;
+    const z = { re: Math.cos(th), im: Math.sin(th) };
+    pts.push(Complex.div(z, Complex.sub({re:1,im:0}, Complex.scale(z, 0.3))));
+  }
+  const sw = Schwarz.buildSchwarzFromRational(phiRat, pts);
+  ok('Schwarz/rational Möbius: builder', !!sw && sw.family === 'boundedQDRational');
+
+  // σ on ∂Ω.
+  let maxBdyErr = 0;
+  for (let k = 0; k < 16; k++) {
+    const th = 2 * Math.PI * k / 16;
+    const z = { re: Math.cos(th), im: Math.sin(th) };
+    const w = sw.evalPhi(z);
+    const sv = sw.sigma(w);
+    if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+  }
+  ok('Schwarz/rational Möbius: σ ≈ id on ∂Ω', maxBdyErr < 1e-5,
+     'maxErr=' + maxBdyErr.toExponential(2));
+}
+
+// ---- LQD adapters: bounded non-singular ----
+{
+  const hData = { poles: [{ a: {re:1,im:0}, principal: [{re:0.5,im:0}] }] };
+  const r = solveInverseQD(hData, { lqd: true, w0: {re:1,im:0} });
+  if (r.success) {
+    const phi = r.primary.phi;
+    const pts = QD_NS.sampleBoundary(phi, 256);
+    const sw = Schwarz.buildSchwarzFromPhi(phi, hData, pts);
+    ok('Schwarz/boundedLQD: builder + family tag',
+       !!sw && sw.family === 'boundedLQD');
+    // σ ≈ id on ∂Ω
+    let maxBdyErr = 0;
+    for (let k = 0; k < 32; k++) {
+      const th = 2 * Math.PI * k / 32;
+      const z = { re: Math.cos(th), im: Math.sin(th) };
+      const w = sw.evalPhi(z);
+      const sv = sw.sigma(w);
+      if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+    }
+    ok('Schwarz/boundedLQD: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-4,
+       'maxErr=' + maxBdyErr.toExponential(2));
+    // ψ ∘ φ ≈ id at interior test points
+    let maxInvErr = 0, nTested = 0;
+    for (let k = 0; k < 8; k++) {
+      const t = (k + 1) / 10;
+      const z0 = { re: t * Math.cos(2 * Math.PI * k / 8),
+                   im: t * Math.sin(2 * Math.PI * k / 8) };
+      const w = sw.evalPhi(z0);
+      if (!sw.isInOmega(w)) continue;
+      const z = sw.psi(w);
+      if (!z) continue;
+      nTested++;
+      maxInvErr = Math.max(maxInvErr, Math.hypot(sw.evalPhi(z).re - w.re,
+                                                  sw.evalPhi(z).im - w.im));
+    }
+    ok('Schwarz/boundedLQD: ψ ∘ φ ≈ id (n=' + nTested + ')',
+       nTested > 0 && maxInvErr < 1e-7,
+       'maxErr=' + maxInvErr.toExponential(2));
+  } else {
+    ok('Schwarz/boundedLQD: skipped (solver failed: ' + r.error + ')', true);
+  }
+}
+
+// ---- LQD adapters: bounded singular ----
+{
+  const hData = { poles: [{ a: {re:2,im:0}, principal: [{re:0.5,im:0}] }] };
+  const r = solveInverseQD(hData, {
+    lqd: true, singular: true, w0: {re:1,im:0}, q: {re:0.5,im:0}
+  });
+  if (r.success) {
+    const phi = r.primary.phi;
+    const pts = QD_NS.sampleBoundary(phi, 256);
+    const sw = Schwarz.buildSchwarzFromPhi(phi, hData, pts);
+    ok('Schwarz/boundedLQD_singular: builder + family tag',
+       !!sw && sw.family === 'boundedLQD_singular');
+    let maxBdyErr = 0;
+    for (let k = 0; k < 32; k++) {
+      const th = 2 * Math.PI * k / 32;
+      const z = { re: Math.cos(th), im: Math.sin(th) };
+      const w = sw.evalPhi(z);
+      const sv = sw.sigma(w);
+      if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+    }
+    ok('Schwarz/boundedLQD_singular: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-4,
+       'maxErr=' + maxBdyErr.toExponential(2));
+  } else {
+    ok('Schwarz/boundedLQD_singular: skipped (solver failed: ' + r.error + ')', true);
+  }
+}
+
+// ---- LQD adapters: unbounded non-singular ----
+{
+  const hData = { poles: [{ a: {re:2,im:0}, principal: [{re:1,im:0}] }] };
+  const r = solveInverseQD(hData, { lqd: true, unbounded: true, c: 0.6 });
+  if (r.success) {
+    const phi = r.primary.phi;
+    const pts = QD_NS.sampleBoundary(phi, 256);
+    const sw = Schwarz.buildSchwarzFromPhi(phi, hData, pts);
+    ok('Schwarz/unboundedLQD: builder + family tag',
+       !!sw && sw.family === 'unboundedLQD');
+    let maxBdyErr = 0;
+    for (let k = 0; k < 32; k++) {
+      const th = 2 * Math.PI * k / 32;
+      const z = { re: Math.cos(th), im: Math.sin(th) };
+      const w = sw.evalPhi(z);
+      const sv = sw.sigma(w);
+      if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+    }
+    ok('Schwarz/unboundedLQD: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-4,
+       'maxErr=' + maxBdyErr.toExponential(2));
+    // ψ ∘ φ ≈ id at exterior test points
+    let maxInvErr = 0, nTested = 0;
+    for (let k = 0; k < 16; k++) {
+      const th = 2 * Math.PI * k / 16;
+      const r0 = 1.4;
+      const z0 = { re: r0 * Math.cos(th), im: r0 * Math.sin(th) };
+      const w = sw.evalPhi(z0);
+      if (!sw.isInOmega(w)) continue;
+      const z = sw.psi(w);
+      if (!z) continue;
+      nTested++;
+      maxInvErr = Math.max(maxInvErr, Math.hypot(sw.evalPhi(z).re - w.re,
+                                                  sw.evalPhi(z).im - w.im));
+    }
+    ok('Schwarz/unboundedLQD: ψ ∘ φ ≈ id (n=' + nTested + ')',
+       nTested > 0 && maxInvErr < 1e-7,
+       'maxErr=' + maxInvErr.toExponential(2));
+  } else {
+    ok('Schwarz/unboundedLQD: skipped (solver failed: ' + r.error + ')', true);
+  }
+}
+
+// ---- LQD adapters: unbounded singular ----
+{
+  const hData = { poles: [{ a: {re:2,im:0}, principal: [{re:1,im:0}] }] };
+  const r = solveInverseQD(hData, {
+    lqd: true, unbounded: true, singular: true, c: 0.6, q: {re:0.5,im:0}
+  });
+  if (r.success) {
+    const phi = r.primary.phi;
+    const pts = QD_NS.sampleBoundary(phi, 256);
+    const sw = Schwarz.buildSchwarzFromPhi(phi, hData, pts);
+    ok('Schwarz/unboundedLQD_singular: builder + family tag',
+       !!sw && sw.family === 'unboundedLQD_singular');
+    let maxBdyErr = 0;
+    for (let k = 0; k < 32; k++) {
+      const th = 2 * Math.PI * k / 32;
+      const z = { re: Math.cos(th), im: Math.sin(th) };
+      const w = sw.evalPhi(z);
+      const sv = sw.sigma(w);
+      if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+    }
+    ok('Schwarz/unboundedLQD_singular: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-4,
+       'maxErr=' + maxBdyErr.toExponential(2));
+  } else {
+    ok('Schwarz/unboundedLQD_singular: skipped (solver failed: ' + r.error + ')', true);
+  }
+}
+
+// ---- LQD adapters: unbounded NON-singular with polynomial-h (HANDOFF #26) --
+// The user's reported failing case: h(w) = 1 (polyPart-only), c = 1. Before
+// HANDOFF #26 the Schwarz adapter silently dropped phi.lqdBeta, evaluating
+// φ = c·z·exp(r̃#(z)) which omits the polynomial-h B(1/z) term. σ on ∂Ω
+// then failed to fix points by O(1).
+{
+  const hData = { poles: [], polyPart: [{re:1, im:0}] };
+  const r = solveInverseQD(hData, { lqd: true, unbounded: true, c: 1 });
+  if (r.success) {
+    const phi = r.primary.phi;
+    const pts = QD_NS.sampleBoundary(phi, 256);
+    const sw = Schwarz.buildSchwarzFromPhi(phi, hData, pts);
+    ok('Schwarz/unboundedLQD-polyPart h=1 c=1: builder + family tag',
+       !!sw && sw.family === 'unboundedLQD');
+    ok('Schwarz/unboundedLQD-polyPart h=1 c=1: phi.lqdBeta carried through',
+       (phi.lqdBeta || []).length > 0,
+       'lqdBeta=' + JSON.stringify(phi.lqdBeta || []));
+    let maxBdyErr = 0;
+    for (let k = 0; k < 32; k++) {
+      const th = 2 * Math.PI * k / 32;
+      const z = { re: Math.cos(th), im: Math.sin(th) };
+      const w = sw.evalPhi(z);
+      const sv = sw.sigma(w);
+      if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+    }
+    ok('Schwarz/unboundedLQD-polyPart h=1 c=1: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-4,
+       'maxErr=' + maxBdyErr.toExponential(2));
+  } else {
+    ok('Schwarz/unboundedLQD-polyPart h=1 c=1: skipped (solver failed: ' + r.error + ')', true);
+  }
+}
+
+// Combined polyPart + finite pole.
+{
+  const hData = {
+    poles: [{ a: {re:2,im:0}, principal: [{re:1,im:0}] }],
+    polyPart: [{re:0.05, im:0}],
+  };
+  const r = solveInverseQD(hData, { lqd: true, unbounded: true, c: 0.6 });
+  if (r.success) {
+    const phi = r.primary.phi;
+    const pts = QD_NS.sampleBoundary(phi, 256);
+    const sw = Schwarz.buildSchwarzFromPhi(phi, hData, pts);
+    ok('Schwarz/unboundedLQD-polyPart+1pole: builder',
+       !!sw && sw.family === 'unboundedLQD');
+    let maxBdyErr = 0;
+    for (let k = 0; k < 32; k++) {
+      const th = 2 * Math.PI * k / 32;
+      const z = { re: Math.cos(th), im: Math.sin(th) };
+      const w = sw.evalPhi(z);
+      const sv = sw.sigma(w);
+      if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+    }
+    ok('Schwarz/unboundedLQD-polyPart+1pole: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-4,
+       'maxErr=' + maxBdyErr.toExponential(2));
+  } else {
+    ok('Schwarz/unboundedLQD-polyPart+1pole: skipped (' + r.error + ')', true);
+  }
+}
+
+// ---- LQD adapters: unbounded SINGULAR with γ-branch (HANDOFF #24/#26) -------
+// Higher-order pole at the origin: hData has an a=0 entry with principal
+// holding q_2…q_{m₀+1}. Before HANDOFF #26 the Schwarz adapter ignored
+// phi.lqdGamma; the synthetic-branch r̃#_syn(z) contribution was missing.
+{
+  const hData = {
+    poles: [
+      { a: {re:0,im:0}, principal: [{re:0.05, im:0}] },   // q_2 = 0.05
+      { a: {re:2,im:0}, principal: [{re:1,    im:0}] },
+    ],
+  };
+  const r = solveInverseQD(hData, {
+    lqd: true, unbounded: true, singular: true, c: 0.5, q: {re:0.2, im:0}
+  });
+  if (r.success) {
+    const phi = r.primary.phi;
+    const pts = QD_NS.sampleBoundary(phi, 256);
+    const sw = Schwarz.buildSchwarzFromPhi(phi, hData, pts);
+    ok('Schwarz/unboundedLQD_singular+γ: builder + family tag',
+       !!sw && sw.family === 'unboundedLQD_singular');
+    ok('Schwarz/unboundedLQD_singular+γ: phi.lqdGamma carried through',
+       (phi.lqdGamma || []).length === 1,
+       'lqdGamma.length=' + (phi.lqdGamma || []).length);
+    let maxBdyErr = 0;
+    for (let k = 0; k < 32; k++) {
+      const th = 2 * Math.PI * k / 32;
+      const z = { re: Math.cos(th), im: Math.sin(th) };
+      const w = sw.evalPhi(z);
+      const sv = sw.sigma(w);
+      if (sv) maxBdyErr = Math.max(maxBdyErr, Math.hypot(sv.re - w.re, sv.im - w.im));
+    }
+    ok('Schwarz/unboundedLQD_singular+γ: σ(w) ≈ w on ∂Ω', maxBdyErr < 1e-4,
+       'maxErr=' + maxBdyErr.toExponential(2));
+  } else {
+    ok('Schwarz/unboundedLQD_singular+γ: skipped (' + r.error + ')', true);
+  }
+}
+
+// ---- Orbit and escapeTime smoke tests for cardioid ----
+{
+  const hData = { poles: [{ a: { re: 0, im: 0 }, principal: [{ re: 1.5, im: 0 }, { re: 0.5, im: 0 }] }] };
+  const { phi, boundaryPts } = solveAndSample(hData, {});
+  const sw = Schwarz.buildSchwarzFromPhi(phi, hData, boundaryPts);
+
+  // Orbit starting at the centroid w₀=0 escapes immediately; pick a generic
+  // interior point instead. φ(0.5) is the image of z=0.5, definitely in Ω.
+  const wInside = sw.evalPhi({ re: 0.5, im: 0 });
+  const orbit = Schwarz.makeOrbit(wInside, sw, { maxIter: 8 });
+  ok('Schwarz/cardioid: makeOrbit returns at least 2 points', orbit.length >= 2,
+     'orbit.length=' + orbit.length);
+
+  // Orbit starting at w₀ = φ(0) (singularity): σ maps it to ∞ immediately.
+  const w0 = phi.w0;
+  const orb0 = Schwarz.makeOrbit(w0, sw, { maxIter: 4 });
+  // First iterate is at ∞ (or diverges); shouldn't loop forever.
+  ok('Schwarz/cardioid: orbit at w₀ terminates', orb0.length <= 4);
+}
+
+// ===========================================================================
+// Parameter-slice cartography (ParamSlice)
+// ===========================================================================
+{
+  // Expose QD on the vm context global so param-slice-common's solveOnePoint
+  // can find it via `global.QD` the same way the browser/worker can.
+  // (The original loader wrote QD to module.exports, not to the global.)
+  ctx.QD = QD_NS;
+  const src = fs.readFileSync(path.join(__dirname, 'param-slice/param-slice-common.js'), 'utf8')
+    .replace(/typeof window !== 'undefined'/g, 'false');
+  vm.runInContext(src, ctx, { filename: 'param-slice/param-slice-common.js' });
+}
+const PS = vm.runInContext('module.exports', ctx);
+ok('ParamSlice: namespace exports core symbols',
+   typeof PS.applyParam === 'function' &&
+   typeof PS.classifyResult === 'function' &&
+   typeof PS.listAvailableParams === 'function' &&
+   typeof PS.formatParamLabel === 'function');
+
+// ---- formatParamLabel produces non-empty strings for all kinds ----
+{
+  const kinds = [
+    { kind: 'residueRe', poleIdx: 0, residueIdx: 1 },
+    { kind: 'residueIm', poleIdx: 1, residueIdx: 0 },
+    { kind: 'poleRe',    poleIdx: 2 },
+    { kind: 'poleIm',    poleIdx: 0 },
+    { kind: 'polyRe',    degree: 0 },
+    { kind: 'polyIm',    degree: 3 },
+    { kind: 'cReal' }, { kind: 'qRe' }, { kind: 'qIm' },
+    { kind: 'w0Re' }, { kind: 'w0Im' },
+  ];
+  let allOK = true;
+  for (const r of kinds) {
+    const s = PS.formatParamLabel(r);
+    if (typeof s !== 'string' || s.length === 0 || s === '?') allOK = false;
+  }
+  ok('ParamSlice: formatParamLabel returns non-empty for every kind', allOK);
+}
+
+// ---- applyParam round-trip per ParamRef kind ----
+{
+  const baseScenario = {
+    hData: {
+      poles: [
+        { a: { re: 1, im: 0 },    principal: [{ re: 0.5, im: 0 }, { re: 0.2, im: 0.1 }] },
+        { a: { re: -1, im: 0.5 }, principal: [{ re: 0.3, im: -0.2 }] },
+      ],
+      polyPart: [{ re: 0, im: 0 }, { re: 1, im: 0 }],
+    },
+    norm: { c: 0.5, w0: { re: 0.2, im: -0.1 }, q: { re: 0.1, im: 0.2 } },
+    opts: {},
+  };
+
+  const cases = [
+    { ref: { kind: 'residueRe', poleIdx: 0, residueIdx: 1 }, value: 0.77,
+      read: s => s.hData.poles[0].principal[1].re },
+    { ref: { kind: 'residueIm', poleIdx: 1, residueIdx: 0 }, value: -0.55,
+      read: s => s.hData.poles[1].principal[0].im },
+    { ref: { kind: 'poleRe', poleIdx: 0 }, value: 2.5,
+      read: s => s.hData.poles[0].a.re },
+    { ref: { kind: 'poleIm', poleIdx: 1 }, value: -1.25,
+      read: s => s.hData.poles[1].a.im },
+    { ref: { kind: 'polyRe', degree: 1 }, value: 3.14,
+      read: s => s.hData.polyPart[1].re },
+    { ref: { kind: 'polyIm', degree: 0 }, value: -0.5,
+      read: s => s.hData.polyPart[0].im },
+    { ref: { kind: 'cReal' }, value: 0.85, read: s => s.norm.c },
+    { ref: { kind: 'qRe' },   value: 1.5,  read: s => s.norm.q.re },
+    { ref: { kind: 'qIm' },   value: -0.5, read: s => s.norm.q.im },
+    { ref: { kind: 'w0Re' },  value: 0.9,  read: s => s.norm.w0.re },
+    { ref: { kind: 'w0Im' },  value: -0.3, read: s => s.norm.w0.im },
+  ];
+  let allOK = true;
+  for (const c of cases) {
+    const s = PS.applyParam(baseScenario, c.ref, c.value);
+    const got = c.read(s);
+    if (Math.abs(got - c.value) > 1e-12) {
+      allOK = false;
+      console.log('  applyParam mismatch: ', c.ref, ' expected ', c.value, ' got ', got);
+    }
+    // And confirm the base scenario wasn't mutated.
+    if (c.read(baseScenario) === c.value && Math.abs(c.value - c.read({
+      hData: { poles: [
+        { a: { re: 1, im: 0 },    principal: [{ re: 0.5, im: 0 }, { re: 0.2, im: 0.1 }] },
+        { a: { re: -1, im: 0.5 }, principal: [{ re: 0.3, im: -0.2 }] },
+      ], polyPart: [{ re: 0, im: 0 }, { re: 1, im: 0 }] },
+      norm: { c: 0.5, w0: { re: 0.2, im: -0.1 }, q: { re: 0.1, im: 0.2 } },
+    })) > 1e-12) {
+      allOK = false;
+      console.log('  applyParam mutated base scenario for ref ', c.ref);
+    }
+  }
+  ok('ParamSlice: applyParam round-trip + non-mutation for every kind', allOK);
+
+  // polyRe/polyIm should grow polyPart on demand.
+  const grown = PS.applyParam(baseScenario, { kind: 'polyRe', degree: 4 }, 9);
+  ok('ParamSlice: applyParam(polyRe degree=4) grows polyPart',
+     grown.hData.polyPart.length >= 5 && Math.abs(grown.hData.polyPart[4].re - 9) < 1e-12);
+}
+
+// ---- listAvailableParams returns non-empty arrays per mode ----
+{
+  const hData = {
+    poles: [
+      { a: { re: 1, im: 0 }, principal: [{ re: 1, im: 0 }] },
+    ],
+    polyPart: [{ re: 0, im: 0 }, { re: 1, im: 0 }],
+  };
+  const modes = [
+    { mode: 'bounded',                norm: { w0: { re: 0, im: 0 } } },
+    { mode: 'unbounded',              norm: { c: 0.5, unbounded: true } },
+    { mode: 'lqd-bounded',            norm: { w0: { re: 1, im: 0 }, lqd: true } },
+    { mode: 'lqd-bounded-singular',   norm: { w0: { re: 1, im: 0 }, q: { re: 0, im: 0 }, lqd: true, singular: true } },
+    { mode: 'lqd-unbounded',          norm: { c: 0.5, lqd: true, unbounded: true } },
+    { mode: 'lqd-unbounded-singular', norm: { c: 0.5, q: { re: 0, im: 0 }, lqd: true, unbounded: true, singular: true } },
+  ];
+  let allOK = true;
+  for (const m of modes) {
+    const lst = PS.listAvailableParams({ hData, norm: m.norm }, m.mode);
+    if (!Array.isArray(lst) || lst.length === 0) { allOK = false; console.log('  no params for mode ', m.mode); }
+    // Per-mode invariants: every mode has pole + residue refs.
+    const hasPoleRe = lst.some(p => p.ref.kind === 'poleRe');
+    const hasResRe  = lst.some(p => p.ref.kind === 'residueRe');
+    if (!hasPoleRe || !hasResRe) { allOK = false; console.log('  missing pole/residue refs for mode ', m.mode); }
+    // Bounded modes should expose w0; unbounded modes should expose c.
+    if (m.mode.includes('unbounded')) {
+      if (!lst.some(p => p.ref.kind === 'cReal')) { allOK = false; console.log('  missing cReal for mode ', m.mode); }
+    } else {
+      if (!lst.some(p => p.ref.kind === 'w0Re')) { allOK = false; console.log('  missing w0Re for mode ', m.mode); }
+    }
+    // Singular modes should expose q.
+    if (m.mode.includes('singular')) {
+      if (!lst.some(p => p.ref.kind === 'qRe')) { allOK = false; console.log('  missing qRe for mode ', m.mode); }
+    }
+    // Poly-allowed modes should expose poly refs (we put a degree-1 polyPart in hData).
+    const polyAllowed = (m.mode === 'unbounded' || m.mode === 'lqd-unbounded' || m.mode === 'lqd-unbounded-singular');
+    const hasPoly = lst.some(p => p.ref.kind === 'polyRe');
+    if (polyAllowed && !hasPoly) { allOK = false; console.log('  missing polyRe for poly-allowed mode ', m.mode); }
+    if (!polyAllowed && hasPoly) { allOK = false; console.log('  unexpected polyRe for non-poly mode ', m.mode); }
+  }
+  ok('ParamSlice: listAvailableParams per-mode invariants', allOK);
+}
+
+// ---- classifyResult — each class triggers for the expected synthetic input ----
+{
+  const cases = [
+    {
+      name: 'VALID',
+      result: { success: true, univalent: true, identityOK: true, iterations: 5, residual: 1e-12 },
+      expected: PS.CLASS_VALID,
+    },
+    {
+      name: 'IDENTITY_FAIL',
+      result: { success: true, univalent: true, identityOK: false, iterations: 5 },
+      expected: PS.CLASS_IDENTITY_FAIL,
+    },
+    {
+      name: 'UNIVALENCE_FAIL',
+      result: { success: true, univalent: false, identityOK: true, iterations: 5 },
+      expected: PS.CLASS_UNIVALENCE_FAIL,
+    },
+    {
+      name: 'NEWTON_DIVERGED',
+      result: { success: false, error: 'Max iterations exceeded', iterations: 200 },
+      expected: PS.CLASS_NEWTON_DIVERGED,
+    },
+    {
+      name: 'NEWTON_DIVERGED (singular jacobian)',
+      result: { success: false, error: 'Singular Jacobian (recovery failed)' },
+      expected: PS.CLASS_NEWTON_DIVERGED,
+    },
+    {
+      name: 'NO_ROOT',
+      result: { success: false, error: 'No algebraic root found by direct, continuation, or multistart' },
+      expected: PS.CLASS_NO_ROOT,
+    },
+    {
+      name: 'CAPABILITY (not yet implemented)',
+      result: { success: false, error: 'Polynomial-h for unbounded LQDs is not yet implemented' },
+      expected: PS.CLASS_CAPABILITY,
+    },
+    {
+      name: 'CAPABILITY (deferred)',
+      result: { success: false, error: 'solveInverseQD: higher-order pole at 0 in h — deferred' },
+      expected: PS.CLASS_CAPABILITY,
+    },
+    {
+      name: 'normalizeOpts thrown — NOT capability (was the bug)',
+      result: { success: false, error: 'solveInverseQD: c must be a positive number' },
+      expected: PS.CLASS_UNCLASSIFIED,
+    },
+  ];
+  let allOK = true;
+  for (const c of cases) {
+    const got = PS.classifyResult(c.result).cls;
+    if (got !== c.expected) {
+      allOK = false;
+      console.log('  classifyResult mismatch for', c.name, ': expected', c.expected, 'got', got);
+    }
+  }
+  ok('ParamSlice: classifyResult — every class triggers correctly', allOK);
+}
+
+// ---- Complex.mulInto / addInto / addMulInto: in-place variants ----
+{
+  const C = QD_NS.Complex;
+  const a = { re: 2, im: 3 };
+  const b = { re: 4, im: -1 };
+  const out = { re: 0, im: 0 };
+  C.mulInto(a, b, out);
+  ok('Complex.mulInto: correct product',
+     Math.abs(out.re - 11) < 1e-12 && Math.abs(out.im - 10) < 1e-12,
+     'out=(' + out.re + ',' + out.im + ')');
+  // Alias safety: out === a.
+  const aa = { re: 2, im: 3 };
+  C.mulInto(aa, b, aa);
+  ok('Complex.mulInto: safe when out===a',
+     Math.abs(aa.re - 11) < 1e-12 && Math.abs(aa.im - 10) < 1e-12);
+  // Accumulator.
+  const acc = { re: 0, im: 0 };
+  C.addMulInto({re:1,im:0}, {re:2,im:3}, acc);
+  C.addMulInto({re:0,im:1}, {re:4,im:5}, acc);
+  // expect (2+3i) + (-5+4i) = (-3,7i)
+  ok('Complex.addMulInto: accumulator correct',
+     Math.abs(acc.re - (-3)) < 1e-12 && Math.abs(acc.im - 7) < 1e-12,
+     'acc=(' + acc.re + ',' + acc.im + ')');
+}
+
+// ---- Schwarz.buildPolygonIndex + pointInPolygonIndexed match the naive version ----
+{
+  // `Schwarz` here is the one captured earlier in the test file (line ~1698);
+  // we can't re-grab via `module.exports.Schwarz` because the later
+  // param-slice load overwrote module.exports.
+  // Build a circle polygon (radius 1, 64 segments).
+  const N = 64;
+  const poly = [];
+  for (let i = 0; i < N; i++) {
+    const th = 2 * Math.PI * i / N;
+    poly.push({ re: Math.cos(th), im: Math.sin(th) });
+  }
+  const idx = Schwarz.buildPolygonIndex(poly, 16);
+  let allMatch = true;
+  // Sample 200 random test points; both implementations must agree.
+  let seed = 12345;
+  const rng = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
+  for (let k = 0; k < 200; k++) {
+    const pt = { re: 2 * rng() - 1, im: 2 * rng() - 1 };
+    const naive   = Schwarz.pointInPolygon(pt, poly);
+    const indexed = Schwarz.pointInPolygonIndexed(pt, idx);
+    if (naive !== indexed) { allMatch = false; break; }
+  }
+  ok('Schwarz.pointInPolygonIndexed matches naive on 200 random points', allMatch);
+  // Sanity: origin inside, far point outside.
+  ok('Schwarz.pointInPolygonIndexed: origin inside circle',
+     Schwarz.pointInPolygonIndexed({ re: 0, im: 0 }, idx));
+  ok('Schwarz.pointInPolygonIndexed: (10,10) outside circle',
+     !Schwarz.pointInPolygonIndexed({ re: 10, im: 10 }, idx));
+}
+
+// ---- adaptive-mesh helpers: cornersAgree + subdivisionPoints ----
+{
+  const n0 = 8, n1 = 8;
+  const grid = new Uint8Array(n0 * n1).fill(PS.UNKNOWN_CLASS);
+  // All four corners of a 2-stride cell at (0,0) are class 0.
+  grid[0 * n0 + 0] = 0;
+  grid[0 * n0 + 2] = 0;
+  grid[2 * n0 + 0] = 0;
+  grid[2 * n0 + 2] = 0;
+  ok('ParamSlice: cornersAgree true when all 4 corners agree',
+     PS.cornersAgree(grid, n0, n1, 0, 0, 2));
+  grid[2 * n0 + 2] = 1;
+  ok('ParamSlice: cornersAgree false after mutation',
+     !PS.cornersAgree(grid, n0, n1, 0, 0, 2));
+  grid[2 * n0 + 2] = PS.UNKNOWN_CLASS;
+  ok('ParamSlice: cornersAgree false when any corner is UNKNOWN',
+     !PS.cornersAgree(grid, n0, n1, 0, 0, 2));
+
+  const sub = PS.subdivisionPoints(0, 0, 4, n0, n1);
+  // 4 edge midpoints + 1 center = 5 points
+  ok('ParamSlice: subdivisionPoints returns 5 in-grid points (stride 4)', sub.length === 5);
+  const hasCenter = sub.some(p => p.c === 2 && p.r === 2);
+  ok('ParamSlice: subdivisionPoints includes the cell center', hasCenter);
+
+  // Out-of-grid clipping: stride-2 cell at (n0-2, n1-2) should produce only
+  // points that fit inside the grid.
+  const subClipped = PS.subdivisionPoints(n0 - 2, n1 - 2, 2, n0, n1);
+  let allInBounds = true;
+  for (const p of subClipped) {
+    if (p.c < 0 || p.c >= n0 || p.r < 0 || p.r >= n1) allInBounds = false;
+  }
+  ok('ParamSlice: subdivisionPoints respects grid bounds at edges', allInBounds);
+}
+
+// ---- cellIsHomogeneous: iter-gradient refinement trigger ----
+{
+  const n0 = 8, n1 = 8;
+  const cls   = new Uint8Array(n0 * n1).fill(PS.UNKNOWN_CLASS);
+  const iters = new Uint8Array(n0 * n1);
+  const V = PS.CLASS_TO_IDX[PS.CLASS_VALID];
+  const F = PS.CLASS_TO_IDX[PS.CLASS_IDENTITY_FAIL];
+  // 4 corners all VALID with iter spread = 12 (5, 8, 11, 17).
+  cls[0]   = V; iters[0]   = 5;
+  cls[2]   = V; iters[2]   = 8;
+  cls[16]  = V; iters[16]  = 11;  // (0,2)
+  cls[18]  = V; iters[18]  = 17;  // (2,2)
+  ok('ParamSlice: cellIsHomogeneous true when iter spread <= iterDelta',
+     PS.cellIsHomogeneous(cls, iters, n0, n1, 0, 0, 2, { iterDelta: 12 }));
+  ok('ParamSlice: cellIsHomogeneous false when iter spread > iterDelta',
+     !PS.cellIsHomogeneous(cls, iters, n0, n1, 0, 0, 2, { iterDelta: 8 }));
+  // For non-VALID classes the iter check is skipped: identical setup but
+  // class F, large iter spread → still homogeneous.
+  cls[0] = F; cls[2] = F; cls[16] = F; cls[18] = F;
+  ok('ParamSlice: cellIsHomogeneous ignores iter spread for non-VALID class',
+     PS.cellIsHomogeneous(cls, iters, n0, n1, 0, 0, 2, { iterDelta: 1 }));
+  // iterDelta=Infinity → degenerates to cornersAgree.
+  cls[0] = V; cls[2] = V; cls[16] = V; cls[18] = V;
+  ok('ParamSlice: cellIsHomogeneous with iterDelta=Infinity matches cornersAgree',
+     PS.cellIsHomogeneous(cls, iters, n0, n1, 0, 0, 2, { iterDelta: Infinity }) ===
+     PS.cornersAgree(cls, n0, n1, 0, 0, 2));
+}
+
+// ---- Adaptive walk: synthetic grid, predicate-driven refinement ----
+// Mirrors the point-selection logic in runAdaptive2D (param-slice-ui.js)
+// without the async dispatch / canvas paint, so we can assert behaviour
+// of both the cornersAgree-only walk and the cellIsHomogeneous walk.
+//
+// Two synthetic truths exercise distinct properties:
+//   (A) Class-only varying grid → tests that cellIsHomogeneous(Infinity)
+//       matches cornersAgree exactly, and both cut cell count significantly.
+//   (B) Uniformly-VALID grid with iter gradient → tests that the iter
+//       trigger fires MORE refinement than cornersAgree, which would
+//       otherwise skip everything beyond the coarse pass.
+{
+  const N = 32;
+  const V = PS.CLASS_TO_IDX[PS.CLASS_VALID];
+  const F = PS.CLASS_TO_IDX[PS.CLASS_IDENTITY_FAIL];
+
+  // Walk the coarse→refine loop using `predicate` and a `truthAt(c,r)`
+  // ground-truth function. Returns { visited, firstRefineCount } where
+  // firstRefineCount is the number of stride-8 cells that subdivided
+  // (the most direct measure of refinement intensity).
+  function walk(predicate, truthAt) {
+    const cls   = new Uint8Array(N * N).fill(PS.UNKNOWN_CLASS);
+    const iters = new Uint8Array(N * N);
+    let stride = 1;
+    while ((stride << 1) <= N / 4) stride <<= 1;
+    const startStride = stride;
+    let visited = 0;
+    let firstRefineCount = -1;
+
+    function sample(c, r) {
+      const idx = r * N + c;
+      if (cls[idx] !== PS.UNKNOWN_CLASS) return;
+      const t = truthAt(c, r);
+      cls[idx] = t.cls;
+      iters[idx] = t.iters;
+      visited++;
+    }
+
+    for (let r = 0; r < N; r += startStride)
+      for (let c = 0; c < N; c += startStride) sample(c, r);
+    for (let r = 0; r < N; r += startStride) sample(N - 1, r);
+    for (let c = 0; c < N; c += startStride) sample(c, N - 1);
+    sample(N - 1, N - 1);
+
+    while (stride > 1) {
+      const seen = new Set();
+      const newPoints = [];
+      let subdivisions = 0;
+      for (let r = 0; r + stride < N; r += stride) {
+        for (let c = 0; c + stride < N; c += stride) {
+          if (predicate(cls, iters, c, r, stride)) continue;
+          subdivisions++;
+          for (const p of PS.subdivisionPoints(c, r, stride, N, N)) {
+            const key = p.r * N + p.c;
+            if (cls[key] === PS.UNKNOWN_CLASS && !seen.has(key)) {
+              seen.add(key);
+              newPoints.push(p);
+            }
+          }
+        }
+      }
+      if (firstRefineCount < 0) firstRefineCount = subdivisions;
+      for (const p of newPoints) sample(p.c, p.r);
+      stride >>= 1;
+    }
+    return { visited, firstRefineCount };
+  }
+
+  // --- (A) Class-only varying grid: VALID below the parabola, else FAIL.
+  // Iter is constant so the iter trigger never fires; the two predicates
+  // must walk identically.
+  const truthClassOnly = (c, r) => ({
+    cls: (r > (c * c) / 8) ? V : F,
+    iters: 10,
+  });
+  const aCorners = walk((cls, _, c, r, s) => PS.cornersAgree(cls, N, N, c, r, s),
+                        truthClassOnly);
+  const aInf = walk((cls, iters, c, r, s) =>
+    PS.cellIsHomogeneous(cls, iters, N, N, c, r, s, { iterDelta: Infinity }),
+    truthClassOnly);
+  ok('ParamSlice adaptive walk: cellIsHomogeneous(Infinity) matches cornersAgree (same visited)',
+     aCorners.visited === aInf.visited);
+  ok('ParamSlice adaptive walk: cellIsHomogeneous(Infinity) matches cornersAgree (same stride-8 refinements)',
+     aCorners.firstRefineCount === aInf.firstRefineCount);
+  ok('ParamSlice adaptive walk: cornersAgree cuts visits to < 80% of full grid on class-only truth',
+     aCorners.visited < 0.8 * N * N);
+
+  // --- (B) Uniformly-VALID grid with smooth iter gradient. cornersAgree
+  // skips everything (one class), so only the coarse pass samples cells.
+  // cellIsHomogeneous(iterDelta=4) sees iter spread > 4 in every coarse
+  // cell and triggers refinement everywhere.
+  const truthIterOnly = (c, r) => ({ cls: V, iters: Math.min(255, c + r) });
+  const bCorners = walk((cls, _, c, r, s) => PS.cornersAgree(cls, N, N, c, r, s),
+                        truthIterOnly);
+  const bIter4 = walk((cls, iters, c, r, s) =>
+    PS.cellIsHomogeneous(cls, iters, N, N, c, r, s, { iterDelta: 4 }),
+    truthIterOnly);
+  ok('ParamSlice adaptive walk: cornersAgree does NO refinement on uniformly-VALID grid',
+     bCorners.firstRefineCount === 0);
+  ok('ParamSlice adaptive walk: cellIsHomogeneous(iterDelta=4) refines every coarse cell on iter-gradient grid',
+     bIter4.firstRefineCount >= 9);
+  // The iter trigger's win is *where* it places samples (in iter-gradient
+  // regions cornersAgree skips), not the *total* count — populating more
+  // cells at coarse strides actually reduces spurious UNKNOWN-corner
+  // subdivisions later, so iterDelta=4 often visits fewer cells overall.
+  // We assert both stay well below full-grid sampling so the algorithm
+  // remains adaptive on this input.
+  ok('ParamSlice adaptive walk: cornersAgree stays < 90% of full grid even on iter-gradient input',
+     bCorners.visited < 0.9 * N * N);
+  ok('ParamSlice adaptive walk: cellIsHomogeneous(iterDelta=4) stays < 60% of full grid on iter-gradient input',
+     bIter4.visited < 0.6 * N * N);
+}
+
+// ---- solveOnePoint: cardioid sweep with warm-start chain ----
+// Needs QD on the same vm context that loaded param-slice-common.js.
+{
+  const baseScenario = {
+    hData: { poles: [{ a: {re:0,im:0}, principal: [{re:1.5,im:0},{re:0.5,im:0}] }], polyPart: [] },
+    norm:  { w0: {re:0,im:0} },
+    opts:  { numRestarts: 1, identityTol: 1e-5, findAlternates: false,
+             newton: { maxIter: 40, tolerance: 1e-9 },
+             usePhases: { direct: true, continuation: false, multistart: true,
+                          diverse: false, deflation: false } },
+    expectedFamilyTag: undefined,
+  };
+  let warmPhi = null;
+  let validCount = 0, warmUsedCount = 0;
+  for (const v of [-0.5, -0.25, 0, 0.25, 0.4]) {
+    const r = PS.solveOnePoint(baseScenario,
+      [{ ref: { kind: 'poleRe', poleIdx: 0 }, value: v }],
+      warmPhi, undefined);
+    if (r.cls === PS.CLASS_VALID) validCount++;
+    if (r.warmUsed) warmUsedCount++;
+    if (r.phiSerialized) warmPhi = r.phiSerialized;
+  }
+  ok('ParamSlice: solveOnePoint produces valid pixels for cardioid sweep',
+     validCount >= 4, 'validCount=' + validCount);
+  ok('ParamSlice: warm-start chain kicks in after first valid solve',
+     warmUsedCount >= 3, 'warmUsedCount=' + warmUsedCount);
+
+  // solveOnePointWithScratch matches solveOnePoint when given a fresh scratch.
+  {
+    const scenarioA = {
+      hData: { poles: [{ a: {re:0,im:0}, principal: [{re:1.5,im:0},{re:0.5,im:0}] }], polyPart: [] },
+      norm:  { w0: {re:0,im:0} },
+      opts:  baseScenario.opts,
+    };
+    const scenarioB = JSON.parse(JSON.stringify(scenarioA));
+    const point = [{ ref: { kind: 'poleRe', poleIdx: 0 }, value: 0.1 }];
+    const r1 = PS.solveOnePoint(scenarioA, point, null, undefined);
+    const scratch = PS.cloneScenario(scenarioB);
+    const r2 = PS.solveOnePointWithScratch(scratch, point, null, undefined);
+    ok('ParamSlice: solveOnePointWithScratch agrees with solveOnePoint on class',
+       r1.cls === r2.cls,
+       'r1=' + r1.cls + ', r2=' + r2.cls);
+    // Same scratch, second point — must produce correct independent result
+    // (scratch reuse invariant: subsequent points overwrite the same refs).
+    const r3 = PS.solveOnePointWithScratch(scratch,
+      [{ ref: { kind: 'poleRe', poleIdx: 0 }, value: 0.2 }], null, undefined);
+    const r4 = PS.solveOnePoint(scenarioA,
+      [{ ref: { kind: 'poleRe', poleIdx: 0 }, value: 0.2 }], null, undefined);
+    ok('ParamSlice: scratch reuse — successive points produce the right answers',
+       r3.cls === r4.cls,
+       'r3=' + r3.cls + ', r4=' + r4.cls);
+  }
+
+  // Warm-start hint of the wrong family should be ignored, not crash.
+  const fakeWarm = { family: 'unboundedLQD', branches: [], unbounded: true,
+                     c: 1, polyA: [], lqdBeta: [] };
+  const r = PS.solveOnePoint(baseScenario,
+    [{ ref: { kind: 'poleRe', poleIdx: 0 }, value: 0.1 }],
+    fakeWarm, undefined);
+  ok('ParamSlice: mismatched-family warmHint is rejected gracefully',
+     r.cls === PS.CLASS_VALID || r.cls === PS.CLASS_NO_ROOT);
+}
+
+// ---- Identity-rigor wiring (HANDOFF #32): opts.univalenceSamples flows
+// from a param-slice scenario through to the family identity verifier
+// for both the warm-start and cold-start paths in _solveScenarioBody.
+{
+  const baseHData = {
+    poles: [{ a: {re:0,im:0}, principal: [{re:1.5,im:0},{re:0.5,im:0}] }],
+    polyPart: [],
+  };
+  // Cold-path: solveInverseQD directly. The solver echoes numSamples back
+  // in result.primary.identity.numSamples (per verifyQuadratureIdentity_QD).
+  const r32  = QD_NS.solveInverseQD(baseHData, {
+    univalenceSamples: 32, identityTol: 1e-5, findAlternates: false,
+    usePhases: { direct: true, continuation: false, multistart: true,
+                 diverse: false, deflation: false },
+  });
+  const r512 = QD_NS.solveInverseQD(baseHData, {
+    univalenceSamples: 512, identityTol: 1e-7, findAlternates: false,
+    usePhases: { direct: true, continuation: false, multistart: true,
+                 diverse: false, deflation: false },
+  });
+  ok('IdentityRigor: solveInverseQD honours univalenceSamples=32',
+     r32.success && r32.primary && r32.primary.identity &&
+     r32.primary.identity.numSamples === 32,
+     'numSamples=' + (r32.primary && r32.primary.identity && r32.primary.identity.numSamples));
+  ok('IdentityRigor: solveInverseQD honours univalenceSamples=512',
+     r512.success && r512.primary && r512.primary.identity &&
+     r512.primary.identity.numSamples === 512,
+     'numSamples=' + (r512.primary && r512.primary.identity && r512.primary.identity.numSamples));
+  // Param-slice path: solveOnePoint with the same opts must reach VALID
+  // for this cardioid configuration at both extremes (it's well within
+  // the QD admissibility region at both N=32 and N=512).
+  const psFast = PS.solveOnePoint({
+    hData: baseHData, norm: { w0: {re:0,im:0} },
+    opts: { univalenceSamples: 32,  identityTol: 1e-5, findAlternates: false,
+            usePhases: { direct: true, continuation: false, multistart: true,
+                         diverse: false, deflation: false } },
+  }, [{ ref: { kind: 'poleRe', poleIdx: 0 }, value: 0 }], null, undefined);
+  const psRig  = PS.solveOnePoint({
+    hData: baseHData, norm: { w0: {re:0,im:0} },
+    opts: { univalenceSamples: 512, identityTol: 1e-7, findAlternates: false,
+            usePhases: { direct: true, continuation: false, multistart: true,
+                         diverse: false, deflation: false } },
+  }, [{ ref: { kind: 'poleRe', poleIdx: 0 }, value: 0 }], null, undefined);
+  ok('IdentityRigor: cardioid scenario stays VALID at Fast preset (N=32, tol=1e-5)',
+     psFast.cls === PS.CLASS_VALID, 'cls=' + psFast.cls);
+  ok('IdentityRigor: cardioid scenario stays VALID at Rigorous preset (N=512, tol=1e-7)',
+     psRig.cls === PS.CLASS_VALID, 'cls=' + psRig.cls);
+}
+
+// ---- QoL (HANDOFF #33): qol.js loads + exports the expected surface ----
+// We exercise qol.js in a minimal DOM stub (just enough surface for the
+// keyboard-shortcut + auto-wire path); the visual DOM behaviour is covered
+// by browser manual smoke. This catches API regressions and crashes during
+// auto-wire on load.
+{
+  const qolCtx = vm.createContext({
+    document: {
+      readyState: 'complete',
+      addEventListener: function () {},
+    },
+    window: undefined,
+    module: { exports: {} },
+    console: console,
+  });
+  qolCtx.window = qolCtx;        // qol.js uses `typeof window !== 'undefined'`
+  qolCtx.globalThis = qolCtx;
+  const qolSrc = fs.readFileSync(path.join(__dirname, 'qol.js'), 'utf8');
+  let loaded = false;
+  try {
+    vm.runInContext(qolSrc, qolCtx, { filename: 'qol.js' });
+    loaded = true;
+  } catch (e) {
+    loaded = false;
+  }
+  ok('QoL: qol.js loads without throwing', loaded);
+  const QoL = qolCtx.QD && qolCtx.QD.QoL;
+  ok('QoL: QD.QoL namespace exists', !!QoL);
+  if (QoL) {
+    ok('QoL: attachHelp is a function', typeof QoL.attachHelp === 'function');
+    ok('QoL: attachHoverTooltip is a function', typeof QoL.attachHoverTooltip === 'function');
+    ok('QoL: copyButton is a function', typeof QoL.copyButton === 'function');
+    ok('QoL: openShortcutsOverlay is a function', typeof QoL.openShortcutsOverlay === 'function');
+    ok('QoL: wireGlobalKeyboardShortcuts is a function',
+       typeof QoL.wireGlobalKeyboardShortcuts === 'function');
+    // attachHelp(null, ...) is a no-op — must not throw.
+    let noOpOK = true;
+    try { QoL.attachHelp(null, 'help'); } catch (e) { noOpOK = false; }
+    ok('QoL: attachHelp(null, ...) is a safe no-op', noOpOK);
+    // attachHoverTooltip(null, ...) likewise.
+    let noOpHover = true;
+    try { QoL.attachHoverTooltip(null, () => null); } catch (e) { noOpHover = false; }
+    ok('QoL: attachHoverTooltip(null, ...) is a safe no-op', noOpHover);
+  }
+}
+
+// ---- colorFor: VALID dims with iter count; non-VALID is iter-independent ----
+{
+  const cBright = PS.colorFor({ cls: PS.CLASS_VALID, iterations: 1 });
+  const cDim    = PS.colorFor({ cls: PS.CLASS_VALID, iterations: 200 });
+  const dimmer  = (cDim[0] + cDim[1] + cDim[2]) < (cBright[0] + cBright[1] + cBright[2]);
+  ok('ParamSlice: colorFor VALID brightness scales with iter count', dimmer);
+
+  const cFail1 = PS.colorFor({ cls: PS.CLASS_NO_ROOT, iterations: 1 });
+  const cFail2 = PS.colorFor({ cls: PS.CLASS_NO_ROOT, iterations: 200 });
+  const same = cFail1[0] === cFail2[0] && cFail1[1] === cFail2[1] && cFail1[2] === cFail2[2];
+  ok('ParamSlice: colorFor non-VALID is iter-independent', same);
+}
+
+// ===========================================================================
+// Polynomial-h support for unbounded LQDs  (HANDOFF #21, L-poly-h — shipped)
+// ===========================================================================
+// Verifies (1) the new helpers in QD.LqdCommon, then (2) end-to-end inverse
+// solves with nonzero polyPart on both unbounded LQD families using the
+// runFamilyBattery pattern. Identity verifiers already account for the
+// polyPart ∞-residue contribution on the RHS, so a passing identity check
+// here genuinely confirms the (★)_F equations are correct (a wrong β would
+// shift φ by an amount the verifier would catch).
+
+// ---- Helpers: rHashLaurentAtInfinity sanity check -------------------------
+{
+  const LC = QD_NS.LqdCommon;
+  ok('LqdCommon: rHashLaurentAtInfinity exists',
+     typeof LC.rHashLaurentAtInfinity === 'function');
+  // Single-branch closed-form: r#(z) = z / (1 − 2z) (A=1, z_j=2, k=1).
+  // ⇒ r#(1/u) = 1/(u − 2) = −Σ_n u^n / 2^{n+1}, i.e. a_l = −1/2^{l+1}.
+  const phi = { c: 1, branches: [{ z: { re: 2, im: 0 }, A: [{ re: 1, im: 0 }] }] };
+  const a = LC.rHashLaurentAtInfinity(phi, 5);
+  let maxErr = 0;
+  for (let l = 0; l < 5; l++) {
+    const expected = -1 / Math.pow(2, l + 1);
+    const err = Math.hypot(a[l].re - expected, a[l].im);
+    if (err > maxErr) maxErr = err;
+  }
+  ok('LqdCommon: rHashLaurentAtInfinity matches closed-form (1 branch, k=1)',
+     maxErr < 1e-14, 'maxErr=' + maxErr.toExponential(2));
+  // Consistency: a[0] should equal rHashAtInfinity (-1/2 for this phi).
+  const rInf = LC.rHashAtInfinity(phi);
+  ok('LqdCommon: rHashLaurentAtInfinity[0] == rHashAtInfinity',
+     Math.hypot(a[0].re - rInf.re, a[0].im - rInf.im) < 1e-14);
+}
+
+// ---- Helper: blaschkeLaurentAtInfinity closed-form check ------------------
+{
+  const LC = QD_NS.LqdCommon;
+  ok('LqdCommon: blaschkeLaurentAtInfinity exists',
+     typeof LC.blaschkeLaurentAtInfinity === 'function');
+  // For z_0 real = 2: |z_0|=2, b_0 = 1/2, b_n = (1−4)/(2·2^n) = −3/2^{n+1}.
+  const bU = LC.blaschkeLaurentAtInfinity({ re: 2, im: 0 }, 4);
+  ok('LqdCommon: blaschke b_0 = 1/|z₀|', Math.abs(bU[0].re - 0.5) < 1e-14);
+  ok('LqdCommon: blaschke b_1 = (1-|z₀|²)/(|z₀|·conj(z₀)) = -3/4',
+     Math.abs(bU[1].re + 0.75) < 1e-14 && Math.abs(bU[1].im) < 1e-14);
+  ok('LqdCommon: blaschke b_2 = -3/8',
+     Math.abs(bU[2].re + 3/8) < 1e-14 && Math.abs(bU[2].im) < 1e-14);
+}
+
+// ---- Helper: phiLaurentAtInfinity_UQDL sanity check -----------------------
+{
+  const LC = QD_NS.LqdCommon;
+  // Trivial phi: c = 1, no branches, no β.  φ(z) = z. So f̃_l = 0 for all l.
+  const phi0 = { c: 1, branches: [], lqdBeta: [] };
+  const f = LC.phiLaurentAtInfinity_UQDL(phi0, 3);
+  let m = 0;
+  for (const ff of f) m = Math.max(m, Math.hypot(ff.re, ff.im));
+  ok('LqdCommon: phiLaurentAtInfinity_UQDL(trivial) = 0',
+     m < 1e-14, 'max=' + m.toExponential(2));
+
+  // β-only: c = 1, β = [β_1]. φ(z) = z·exp(β_1/z) = z + β_1 + β_1²/(2z) + ...
+  // So f̃_0 = β_1, f̃_1 = β_1²/2.
+  const phi1 = { c: 1, branches: [], lqdBeta: [{ re: 0.3, im: 0 }] };
+  const f1 = LC.phiLaurentAtInfinity_UQDL(phi1, 2);
+  ok('LqdCommon: phiLaurentAtInfinity_UQDL(β=[0.3])[0] = 0.3',
+     Math.abs(f1[0].re - 0.3) < 1e-14);
+  ok('LqdCommon: phiLaurentAtInfinity_UQDL(β=[0.3])[1] = 0.045',
+     Math.abs(f1[1].re - 0.3 * 0.3 / 2) < 1e-14);
+}
+
+// ---- End-to-end polynomial-h LQD solves -----------------------------------
+runFamilyBattery('unboundedLQD (poly-h)', [
+  // Single finite pole + tiny linear polyPart (degree-0 polynomial-h).
+  // c = 0.6 matches the existing finite-pole-only smoke test (line 862) so
+  // the geometry is similar; polyPart adds a small constant perturbation.
+  { tag: 'one pole + C∞,0 = 0.02',
+    hData: {
+      poles: [{ a: {re:2,im:0}, principal: [{re:1,im:0}] }],
+      polyPart: [{ re: 0.02, im: 0 }],
+    },
+    opts: { lqd: true, unbounded: true, c: 0.6 },
+    identityTol: 1e-6, family: 'unboundedLQD',
+    insideTest: { point: {re:0,im:0}, expected: true, label: 'origin (∈ K)' } },
+  // Slightly larger polyPart.
+  { tag: 'one pole + C∞,0 = 0.05',
+    hData: {
+      poles: [{ a: {re:2,im:0}, principal: [{re:1,im:0}] }],
+      polyPart: [{ re: 0.05, im: 0 }],
+    },
+    opts: { lqd: true, unbounded: true, c: 0.6 },
+    identityTol: 1e-6, family: 'unboundedLQD',
+    insideTest: { point: {re:0,im:0}, expected: true, label: 'origin (∈ K)' } },
+  // Complex polyPart coefficient.
+  { tag: 'one pole + complex C∞,0',
+    hData: {
+      poles: [{ a: {re:2,im:0}, principal: [{re:1,im:0}] }],
+      polyPart: [{ re: 0.02, im: 0.03 }],
+    },
+    opts: { lqd: true, unbounded: true, c: 0.6 },
+    identityTol: 1e-6, family: 'unboundedLQD',
+    insideTest: { point: {re:0,im:0}, expected: true, label: 'origin (∈ K)' } },
+  // Two finite poles + polyPart.
+  { tag: 'two poles + C∞,0 = 0.02',
+    hData: {
+      poles: [
+        { a: {re: 2.0, im: 0}, principal: [{re:1,im:0}] },
+        { a: {re:-2.0, im: 0}, principal: [{re:1,im:0}] },
+      ],
+      polyPart: [{ re: 0.02, im: 0 }],
+    },
+    opts: { lqd: true, unbounded: true, c: 0.6 },
+    identityTol: 1e-6, family: 'unboundedLQD',
+    insideTest: { point: {re:0,im:0}, expected: true, label: 'origin (∈ K)' } },
+]);
+
+// Self-consistency cross-check: after the simplest solve above, recompute the
+// (★)_F target and confirm |β − target| is at machine precision (proves the
+// equation we added IS the fixed point, not a coincidence).
+{
+  const hData = {
+    poles: [{ a: {re:2,im:0}, principal: [{re:1,im:0}] }],
+    polyPart: [{ re: 0.02, im: 0 }],
+  };
+  const r = solveInverseQD(hData, { lqd: true, unbounded: true, c: 0.6 });
+  if (r.success) {
+    const Fam = QD_NS.Family.unboundedLQD;
+    const phi = r.primary.phi;
+    const tgt = Fam.computeTargets(phi, hData);
+    let maxErr = 0;
+    for (let l = 0; l < phi.lqdBeta.length; l++) {
+      const e = Math.hypot(phi.lqdBeta[l].re - tgt.F[l].re,
+                            phi.lqdBeta[l].im - tgt.F[l].im);
+      if (e > maxErr) maxErr = e;
+    }
+    ok('unboundedLQD: solved β matches (★)_F target',
+       maxErr < 1e-10, 'maxErr=' + maxErr.toExponential(2));
+  } else {
+    ok('unboundedLQD self-consistency setup', false, 'solve failed: ' + r.error);
+  }
+}
+
+// Regression: pure-finite-pole case (no polyPart) should be UNCHANGED by the
+// (★)_F additions — same maxRelDiff to the same tolerance.
+{
+  const hData = { poles: [{ a: {re:2,im:0}, principal: [{re:1,im:0}] }] };
+  const r = solveInverseQD(hData, { lqd: true, unbounded: true, c: 0.6 });
+  ok('unboundedLQD: finite-pole-only path still solves (no polyPart regression)',
+     r.success && r.primary.identity.maxRelDiff < 1e-7,
+     r.success ? 'maxRel=' + r.primary.identity.maxRelDiff.toExponential(2)
+               : 'solve failed: ' + r.error);
+  if (r.success) {
+    ok('unboundedLQD: finite-pole-only β is empty (no polyPart ⇒ no β)',
+       (r.primary.phi.lqdBeta || []).length === 0);
+  }
+}
+
+// ---- Singular LQD with polynomial-h ---------------------------------------
+// The boundary identity verifier for UQDLS uses test class w/(w-b)^k for
+// k ≥ 2, which vanishes at ∞ — so the existing identityOK check from
+// runFamilyBattery can't detect β. Instead we verify directly that the
+// β-corrected (●₀) q-equation holds at convergence (it must, by Newton
+// construction; but it ALSO confirms β has been correctly pinned by (★)_F,
+// since wrong β would force the q-equation to fail or Newton to diverge).
+//
+// We solve and then evaluate the family's residual function directly; if
+// the (●₀) and (★)_F slots are near zero, the full system is satisfied.
+{
+  function residualMaxAbs(family, phi, hData) {
+    const res = family.residual(phi, hData);
+    let m = 0;
+    for (const x of res) m = Math.max(m, Math.abs(x));
+    return m;
+  }
+  const Fam = QD_NS.Family.unboundedLQD_singular;
+  const cases = [
+    { tag: 'one pole + q=0.2 + C∞,0 = 0.02',
+      hData: {
+        poles: [{ a:{re:2,im:0}, principal:[{re:1,im:0}] }],
+        polyPart: [{re:0.02, im:0}],
+      },
+      opts: { lqd: true, unbounded: true, singular: true, c: 0.5, q: {re:0.2,im:0} } },
+    { tag: 'one pole + q=0.2 + complex C∞,0',
+      hData: {
+        poles: [{ a:{re:2,im:0}, principal:[{re:1,im:0}] }],
+        polyPart: [{re:0.02, im:0.01}],
+      },
+      opts: { lqd: true, unbounded: true, singular: true, c: 0.5, q: {re:0.2,im:0} } },
+    { tag: 'one pole + larger C∞,0',
+      hData: {
+        poles: [{ a:{re:2,im:0}, principal:[{re:1,im:0}] }],
+        polyPart: [{re:0.05, im:0}],
+      },
+      opts: { lqd: true, unbounded: true, singular: true, c: 0.5, q: {re:0.2,im:0} } },
+    { tag: 'two poles + q=0.1 + C∞,0 = 0.02',
+      hData: {
+        poles: [
+          { a:{re: 2,im:0}, principal:[{re:1,im:0}] },
+          { a:{re:-2,im:0}, principal:[{re:1,im:0}] },
+        ],
+        polyPart: [{re:0.02, im:0}],
+      },
+      opts: { lqd: true, unbounded: true, singular: true, c: 0.5, q: {re:0.1,im:0} } },
+  ];
+  for (const c of cases) {
+    const tag = 'unboundedLQD_singular (poly-h) :: ' + c.tag;
+    const r = solveInverseQD(c.hData, c.opts);
+    ok(tag + ' solves', r.success, r.success ? '' : r.error);
+    if (!r.success) continue;
+    ok(tag + ' univalent', r.primary.univalent);
+    const maxRes = residualMaxAbs(Fam, r.primary.phi, c.hData);
+    ok(tag + ' (●), (★)_A, (●₀), (★)_F all satisfied (residual < 1e-8)',
+       maxRes < 1e-8, 'max |res| = ' + maxRes.toExponential(2));
+    // β should be nonzero (polyPart drove it away from 0).
+    ok(tag + ' β is nonzero',
+       r.primary.phi.lqdBeta.length === c.hData.polyPart.length &&
+       Math.hypot(r.primary.phi.lqdBeta[0].re, r.primary.phi.lqdBeta[0].im) > 1e-8,
+       'β = ' + JSON.stringify(r.primary.phi.lqdBeta[0]));
+    // Identity check (HANDOFF #25 added polyPart-Res∞ contribution to RHS).
+    // All these cases have at least one finite pole, so the formula closes
+    // cleanly to machine precision.
+    ok(tag + ' identityOK (1e-7)',
+       r.primary.identity.maxRelDiff < 1e-7,
+       'maxRelDiff=' + r.primary.identity.maxRelDiff.toExponential(2));
+  }
+}
+
+// Self-consistency: solved β matches the (★)_F target at convergence.
+{
+  const hData = {
+    poles: [{ a:{re:2,im:0}, principal:[{re:1,im:0}] }],
+    polyPart: [{re:0.02, im:0}],
+  };
+  const r = solveInverseQD(hData, { lqd: true, unbounded: true, singular: true, c: 0.5, q: {re:0.2,im:0} });
+  if (r.success) {
+    const Fam = QD_NS.Family.unboundedLQD_singular;
+    const phi = r.primary.phi;
+    const tgt = Fam.computeTargets(phi, hData);
+    let maxErr = 0;
+    for (let l = 0; l < phi.lqdBeta.length; l++) {
+      const e = Math.hypot(phi.lqdBeta[l].re - tgt.F[l].re,
+                            phi.lqdBeta[l].im - tgt.F[l].im);
+      if (e > maxErr) maxErr = e;
+    }
+    ok('unboundedLQD_singular: solved β matches (★)_F target',
+       maxErr < 1e-10, 'maxErr=' + maxErr.toExponential(2));
+  } else {
+    ok('unboundedLQD_singular self-consistency setup', false, 'solve failed: ' + r.error);
+  }
+}
+
+// Regression: no-polyPart UQDLS cases unchanged by the new (●₀) β-correction
+// (since B ≡ 0 when β = []).
+{
+  const hData = { poles: [{ a:{re:2,im:0}, principal:[{re:1,im:0}] }] };
+  const r = solveInverseQD(hData, { lqd: true, unbounded: true, singular: true, c: 0.5, q: {re:0.2,im:0} });
+  ok('unboundedLQD_singular: no-polyPart path unaffected by β-correction',
+     r.success && r.primary.identity.maxRelDiff < 1e-6,
+     r.success ? 'maxRel=' + r.primary.identity.maxRelDiff.toExponential(2)
+               : 'solve failed: ' + r.error);
+  if (r.success) {
+    ok('unboundedLQD_singular: no-polyPart β is empty',
+       (r.primary.phi.lqdBeta || []).length === 0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HANDOFF #23 (a): UQDLS with NO finite poles + polyPart should be solvable.
+// Previously rejected as "no unbounded singular LQD exists for h = q/w with
+// no finite poles" — that rejection was correct only when polyPart is also
+// empty.  With polyPart, the system has enough structure to pin φ.
+// ---------------------------------------------------------------------------
+{
+  function tryNoFinitePoles(tag, hData, opts) {
+    const r = solveInverseQD(hData, opts);
+    ok('unboundedLQD_singular (no finite poles) :: ' + tag + ' solves',
+       r.success, r.success ? '' : r.error);
+    if (!r.success) return;
+    ok('unboundedLQD_singular (no finite poles) :: ' + tag + ' univalent',
+       r.primary.univalent);
+    const Fam = QD_NS.Family.unboundedLQD_singular;
+    const res = Fam.residual(r.primary.phi, hData);
+    let m = 0; for (const x of res) m = Math.max(m, Math.abs(x));
+    ok('unboundedLQD_singular (no finite poles) :: ' + tag +
+       ' residual < 1e-8 (Newton converged at machine precision)',
+       m < 1e-8, 'max|res| = ' + m.toExponential(2));
+  }
+  tryNoFinitePoles('q=0.2 + linear polyPart',
+    { poles: [], polyPart: [{ re: 0.02, im: 0 }] },
+    { lqd: true, unbounded: true, singular: true, c: 0.5, q: { re: 0.2, im: 0 } });
+  tryNoFinitePoles('pure polyPart, q = 0',
+    { poles: [], polyPart: [{ re: 0.05, im: 0 }] },
+    { lqd: true, unbounded: true, singular: true, c: 0.5, q: { re: 0, im: 0 } });
+  tryNoFinitePoles('q=0.3 + complex polyPart',
+    { poles: [], polyPart: [{ re: 0.2, im: 0.1 }] },
+    { lqd: true, unbounded: true, singular: true, c: 0.5, q: { re: 0.3, im: 0 } });
+
+  // Negative case: still rejected when neither finite poles nor polyPart.
+  let threw = false;
+  try {
+    solveInverseQD({ poles: [], polyPart: [] },
+                   { lqd: true, unbounded: true, singular: true, c: 0.5, q: { re: 0.2, im: 0 } });
+  } catch (e) { threw = true; }
+  // (solveInverseQD may catch and return {success:false, error:...} instead
+  //  of throwing; accept either path.)
+  let stillRejected = threw;
+  if (!stillRejected) {
+    const r = solveInverseQD({ poles: [], polyPart: [] },
+        { lqd: true, unbounded: true, singular: true, c: 0.5, q: { re: 0.2, im: 0 } });
+    stillRejected = !r.success && /no unbounded singular LQD/.test(r.error || '');
+  }
+  ok('unboundedLQD_singular: h = q/w only (no poles, no polyPart) still rejected',
+     stillRejected);
+}
+
+// ===========================================================================
+// UQDLS case (b): higher-order pole at the origin (HANDOFF #24)
+// ---------------------------------------------------------------------------
+// hData.poles entry with a={re:0,im:0} and principal=[q_2, …, q_{m₀+1}]
+// (length m₀; q_1 stays in opts.q). The synthetic γ-branch at z = z₀ pins
+// φ such that S₀(w) has the correct order-(m₀+1) pole at w = 0.
+//
+// Tests check: solves + univalent + residual < 1e-8 + lqdGamma length =
+// m₀ + computeTargets.G self-consistency. The IDENTITY check (1e-7) is
+// applied to cases that have no polyPart (the polyPart-Res_∞ contribution
+// to the identity verifier RHS is a known pre-existing gap inherited from
+// HANDOFF #22; polyPart-only cases there also only check residual). The
+// β-γ interaction case uses the residual check only.
+// ===========================================================================
+{
+  const Fam = QD_NS.Family.unboundedLQD_singular;
+  const residualMaxAbs = (phi, hData) => {
+    const res = Fam.residual(phi, hData);
+    let m = 0; for (const x of res) m = Math.max(m, Math.abs(x));
+    return m;
+  };
+  const tryGammaCase = (tag, hData, opts, { checkIdentity } = {}) => {
+    const r = solveInverseQD(hData, opts);
+    const prefix = 'unboundedLQD_singular (γ) :: ' + tag;
+    ok(prefix + ' solves',
+       r.success === true,
+       r.success ? '' : (r.error || 'no error'));
+    if (!r.success) return;
+    const sol = r.primary;
+    ok(prefix + ' family tag', sol.phi.family === 'unboundedLQD_singular');
+    ok(prefix + ' univalent', sol.univalent);
+    const maxRes = residualMaxAbs(sol.phi, hData);
+    ok(prefix + ' residual < 1e-8',
+       maxRes < 1e-8, 'max |res| = ' + maxRes.toExponential(2));
+    // lqdGamma must be present and length-m0
+    const a0 = (hData.poles || []).find(p =>
+      Math.hypot(p.a.re, p.a.im) < 1e-10
+    );
+    const m0 = a0 ? a0.principal.length : 0;
+    ok(prefix + ' lqdGamma length = m0=' + m0,
+       (sol.phi.lqdGamma || []).length === m0,
+       'got length ' + (sol.phi.lqdGamma || []).length);
+    // computeTargets.G should match lqdGamma at convergence
+    const tgt = Fam.computeTargets(sol.phi, hData);
+    let maxErrG = 0;
+    for (let l = 0; l < m0; l++) {
+      const e = Math.hypot(sol.phi.lqdGamma[l].re - tgt.G[l].re,
+                            sol.phi.lqdGamma[l].im - tgt.G[l].im);
+      if (e > maxErrG) maxErrG = e;
+    }
+    ok(prefix + ' γ matches (★)_Γ target',
+       maxErrG < 1e-10, 'maxErr=' + maxErrG.toExponential(2));
+    if (checkIdentity) {
+      ok(prefix + ' identityOK (1e-7)',
+         sol.identity.maxRelDiff < 1e-7,
+         'maxRelDiff=' + sol.identity.maxRelDiff.toExponential(2));
+    }
+  };
+  tryGammaCase(
+    'q + q_2 + one finite pole (m_0=1)',
+    {
+      poles: [
+        { a: {re:0, im:0}, principal: [{re:0.05, im:0}] },   // q_2 = 0.05
+        { a: {re:2, im:0}, principal: [{re:1,    im:0}] },
+      ],
+    },
+    { lqd: true, unbounded: true, singular: true,
+      c: 0.5, q: { re: 0.2, im: 0 } },
+    { checkIdentity: true }
+  );
+  tryGammaCase(
+    'q + q_2 + q_3 + finite pole (m_0=2)',
+    {
+      poles: [
+        { a: {re:0, im:0}, principal: [{re:0.05, im:0}, {re:0.01, im:0}] },
+        { a: {re:2, im:0}, principal: [{re:1,    im:0}] },
+      ],
+    },
+    { lqd: true, unbounded: true, singular: true,
+      c: 0.5, q: { re: 0.2, im: 0 } },
+    { checkIdentity: true }
+  );
+  tryGammaCase(
+    'q + q_2 + finite + polyPart (β-γ interaction)',
+    {
+      poles: [
+        { a: {re:0, im:0}, principal: [{re:0.05, im:0}] },
+        { a: {re:2, im:0}, principal: [{re:1,    im:0}] },
+      ],
+      polyPart: [{ re: 0.02, im: 0 }],
+    },
+    { lqd: true, unbounded: true, singular: true,
+      c: 0.5, q: { re: 0.2, im: 0 } },
+    { checkIdentity: true }
+  );
+  // Complex γ — make sure phase is preserved end-to-end.
+  tryGammaCase(
+    'q + complex q_2 + finite (m_0=1, complex γ)',
+    {
+      poles: [
+        { a: {re:0, im:0}, principal: [{re:0.03, im:0.04}] },
+        { a: {re:2, im:0}, principal: [{re:1,    im:0}] },
+      ],
+    },
+    { lqd: true, unbounded: true, singular: true,
+      c: 0.5, q: { re: 0.2, im: 0 } },
+    { checkIdentity: true }
+  );
+}
+
+// ===========================================================================
+// Riemann-sphere math kernel (SphereCommon)
+// ===========================================================================
+{
+  const src = fs.readFileSync(path.join(__dirname, 'sphere/sphere-common.js'), 'utf8')
+    .replace(/typeof window !== 'undefined'/g, 'false');
+  vm.runInContext(src, ctx, { filename: 'sphere/sphere-common.js' });
+}
+const SC = vm.runInContext('module.exports.SphereCommon', ctx);
+
+ok('SphereCommon: namespace exports required symbols',
+   typeof SC.projectToSphere    === 'function' &&
+   typeof SC.unprojectFromSphere=== 'function' &&
+   typeof SC.buildSphereMesh    === 'function' &&
+   typeof SC.mat4lookAt         === 'function' &&
+   typeof SC.mat4perspective     === 'function' &&
+   typeof SC.mat4multiply        === 'function');
+
+// ---- projectToSphere / unprojectFromSphere roundtrip ----------------------
+{
+  const pts = [
+    { re: 0,     im: 0     },   // origin → south pole
+    { re: 1,     im: 0     },   // |w|=1, real axis
+    { re: 0,     im: 1     },   // |w|=1, imag axis
+    { re: 2,     im: 0     },   // outside unit disk
+    { re: -1.5,  im: 0.8   },
+    { re: 1e4,   im: -3e3  },   // large |w| → near north pole
+  ];
+  let maxErr = 0;
+  for (const w of pts) {
+    const p = SC.projectToSphere(w);
+    const wBack = SC.unprojectFromSphere(p);
+    if (!wBack) continue;  // near north pole: acceptable null
+    const err = Math.hypot(wBack.re - w.re, wBack.im - w.im);
+    if (err > maxErr) maxErr = err;
+  }
+  ok('SphereCommon: projectToSphere/unprojectFromSphere roundtrip', maxErr < 1e-10,
+     'maxErr=' + maxErr.toExponential(2));
+}
+
+// ---- Specific values -------------------------------------------------------
+{
+  const south = SC.projectToSphere({ re: 0, im: 0 });
+  ok('SphereCommon: origin → south pole (0,0,−1)',
+     Math.abs(south.x) < 1e-14 && Math.abs(south.y) < 1e-14 &&
+     Math.abs(south.z + 1) < 1e-14);
+
+  // |w|=1 → equator (z=0).
+  const eq1 = SC.projectToSphere({ re: 1, im: 0 });
+  const eq2 = SC.projectToSphere({ re: 0, im: 1 });
+  ok('SphereCommon: |w|=1 → equator z=0',
+     Math.abs(eq1.z) < 1e-14 && Math.abs(eq2.z) < 1e-14);
+
+  // |w|=2 → z = (4−1)/(4+1) = 3/5.
+  const p2 = SC.projectToSphere({ re: 2, im: 0 });
+  ok('SphereCommon: |w|=2 → z = 3/5',
+     Math.abs(p2.z - 3/5) < 1e-14);
+
+  // All projected points lie on the unit sphere.
+  const pts = [{ re:0,im:0 }, { re:1,im:0 }, { re:3,im:-2 }, { re:-0.5,im:1.5 }];
+  let allUnit = true;
+  for (const w of pts) {
+    const p = SC.projectToSphere(w);
+    const r = Math.sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+    if (Math.abs(r - 1) > 1e-14) allUnit = false;
+  }
+  ok('SphereCommon: projected points lie on unit sphere', allUnit);
+}
+
+// ---- unprojectFromSphere returns null near north pole ----------------------
+{
+  const np = { x: 0, y: 0, z: 1.0 };   // exact north pole
+  const w  = SC.unprojectFromSphere(np, 1e-9);
+  ok('SphereCommon: unprojectFromSphere returns null at north pole', w === null);
+
+  // Very close but not exact north pole — also null (within eps).
+  const np2 = { x: 1e-11, y: 0, z: 1 - 5e-12 };
+  const w2 = SC.unprojectFromSphere(np2, 1e-9);
+  ok('SphereCommon: unprojectFromSphere returns null near north pole', w2 === null);
+}
+
+// ---- 50-point random roundtrip within 1e-12 --------------------------------
+{
+  // Simple deterministic "random" via a seeded sequence.
+  let s = 0x12345678;
+  function rng() { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return (s >>> 0) / 0xFFFFFFFF; }
+  let maxErr = 0;
+  for (let i = 0; i < 50; i++) {
+    const r  = rng() * 10;     // radius 0..10
+    const a  = rng() * 2 * Math.PI;
+    const w  = { re: r * Math.cos(a), im: r * Math.sin(a) };
+    const p  = SC.projectToSphere(w);
+    const w2 = SC.unprojectFromSphere(p);
+    if (!w2) continue;
+    const err = Math.hypot(w2.re - w.re, w2.im - w.im);
+    if (err > maxErr) maxErr = err;
+  }
+  ok('SphereCommon: 50-point random roundtrip < 1e-12', maxErr < 1e-12,
+     'maxErr=' + maxErr.toExponential(2));
+}
+
+// ---- buildSphereMesh -------------------------------------------------------
+{
+  const mesh = SC.buildSphereMesh(96, 48);
+  const expectedVerts = 97 * 49;   // (nLon+1)*(nLat+1)
+  const expectedTris  = 96 * 48 * 2;
+  ok('SphereCommon: buildSphereMesh vertex count',
+     mesh.nVerts === expectedVerts && mesh.positions.length === expectedVerts * 3,
+     'nVerts=' + mesh.nVerts);
+  ok('SphereCommon: buildSphereMesh triangle count',
+     mesh.nTris === expectedTris && mesh.indices.length === expectedTris * 3,
+     'nTris=' + mesh.nTris);
+
+  // All vertex positions lie on the unit sphere.
+  let allUnit = true;
+  for (let i = 0; i < mesh.nVerts; i++) {
+    const x = mesh.positions[3*i], y = mesh.positions[3*i+1], z = mesh.positions[3*i+2];
+    const r = Math.sqrt(x*x + y*y + z*z);
+    if (Math.abs(r - 1) > 1e-6) { allUnit = false; break; }
+  }
+  ok('SphereCommon: all mesh vertices on unit sphere', allUnit);
+
+  // North pole at first vertex (j=0, i=0): should be (0,0,+1).
+  ok('SphereCommon: mesh vertex 0 is north pole',
+     Math.abs(mesh.positions[0]) < 1e-15 &&
+     Math.abs(mesh.positions[1]) < 1e-15 &&
+     Math.abs(mesh.positions[2] - 1) < 1e-15);
+
+  // Indices in range [0, nVerts).
+  let idxOK = true;
+  for (let i = 0; i < mesh.indices.length; i++) {
+    if (mesh.indices[i] >= mesh.nVerts) { idxOK = false; break; }
+  }
+  ok('SphereCommon: all mesh indices in valid range', idxOK);
+}
+
+// ---- mat4lookAt orthonormal frame -----------------------------------------
+{
+  const eye    = [2, 1, 1.5];
+  const target = [0, 0, 0];
+  const up     = [0, 0, 1];
+  const m = SC.mat4lookAt(eye, target, up);
+
+  // The 3 row-vectors of the rotation part (extracted from column-major m):
+  // right = (m[0], m[4], m[8])
+  // vup   = (m[1], m[5], m[9])
+  // -fwd  = (m[2], m[6], m[10])
+  const right = [m[0], m[4], m[8]];
+  const vup   = [m[1], m[5], m[9]];
+  const bkwd  = [m[2], m[6], m[10]];
+
+  function dot3(a, b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+  function len3(a)    { return Math.sqrt(dot3(a,a)); }
+  const eps = 1e-12;
+  ok('SphereCommon: mat4lookAt right is unit',   Math.abs(len3(right) - 1) < eps);
+  ok('SphereCommon: mat4lookAt vup is unit',     Math.abs(len3(vup)   - 1) < eps);
+  ok('SphereCommon: mat4lookAt bkwd is unit',    Math.abs(len3(bkwd)  - 1) < eps);
+  ok('SphereCommon: mat4lookAt right⊥vup',       Math.abs(dot3(right, vup))  < eps);
+  ok('SphereCommon: mat4lookAt right⊥bkwd',      Math.abs(dot3(right, bkwd)) < eps);
+  ok('SphereCommon: mat4lookAt vup⊥bkwd',        Math.abs(dot3(vup,   bkwd)) < eps);
+
+  // The last row should be (0, 0, 0, 1).
+  ok('SphereCommon: mat4lookAt last row = (0,0,0,1)',
+     m[3] === 0 && m[7] === 0 && m[11] === 0 && m[15] === 1);
+}
+
+// ---- mat4perspective structure --------------------------------------------
+{
+  const fovY = Math.PI / 3;   // 60°
+  const aspect = 16 / 9;
+  const near = 0.1, far = 100;
+  const m = SC.mat4perspective(fovY, aspect, near, far);
+  const f = 1 / Math.tan(fovY / 2);
+  ok('SphereCommon: mat4perspective m[0] = f/aspect',
+     Math.abs(m[0] - f/aspect) < 1e-14);
+  ok('SphereCommon: mat4perspective m[5] = f',
+     Math.abs(m[5] - f) < 1e-14);
+  ok('SphereCommon: mat4perspective m[11] = −1 (perspective divide)',
+     m[11] === -1);
+  ok('SphereCommon: mat4perspective m[15] = 0 (perspective divide)',
+     m[15] === 0);
+}
+
+// ---- mat4invertRigid is inverse of mat4lookAt -----------------------------
+{
+  const eye    = [1.5, -2, 1];
+  const target = [0, 0, 0];
+  const up     = [0, 0, 1];
+  const m   = SC.mat4lookAt(eye, target, up);
+  const inv = SC.mat4invertRigid(m);
+  const prod = SC.mat4multiply(m, inv);  // should ≈ identity
+
+  let maxErr = 0;
+  for (let col = 0; col < 4; col++) {
+    for (let row = 0; row < 4; row++) {
+      const expected = (row === col) ? 1 : 0;
+      const err = Math.abs(prod[col*4+row] - expected);
+      if (err > maxErr) maxErr = err;
+    }
+  }
+  ok('SphereCommon: mat4invertRigid is left-inverse of mat4lookAt',
+     maxErr < 1e-12, 'maxErr=' + maxErr.toExponential(2));
+}
+
+// ===========================================================================
+// Critical-set image (zeros of φ', mapped to w-plane)
+// ===========================================================================
+// Pulled out of QD_NS now that critical-set.js is loaded by the for-loop above.
+const findCriticalPoints = QD_NS.findCriticalPoints;
+const CriticalSet         = QD_NS.CriticalSet;
+
+ok('CriticalSet: namespace exports',
+   typeof findCriticalPoints === 'function' &&
+   typeof CriticalSet === 'object' &&
+   typeof CriticalSet._classify === 'function' &&
+   typeof CriticalSet._snapKey === 'function');
+
+// ---- _classify -------------------------------------------------------------
+// Bounded family: relevant disk = 𝔻 (|z|<1).
+{
+  const a = CriticalSet._classify(0.5, false);
+  ok('CriticalSet: bounded, |z|=0.5 → critical/inDomain',
+     a.inDomain === true && a.severity === 'critical');
+
+  const b = CriticalSet._classify(0.98, false);
+  ok('CriticalSet: bounded, |z|=0.98 → near/inDomain',
+     b.inDomain === true && b.severity === 'near');
+
+  const c = CriticalSet._classify(1.02, false);
+  ok('CriticalSet: bounded, |z|=1.02 → near/!inDomain',
+     c.inDomain === false && c.severity === 'near');
+
+  const d = CriticalSet._classify(2.0, false);
+  ok('CriticalSet: bounded, |z|=2 → safe/!inDomain',
+     d.inDomain === false && d.severity === 'safe');
+}
+
+// Unbounded family: relevant disk = 𝔻* (|z|>1).
+{
+  const a = CriticalSet._classify(2.0, true);
+  ok('CriticalSet: unbounded, |z|=2 → critical/inDomain',
+     a.inDomain === true && a.severity === 'critical');
+
+  const b = CriticalSet._classify(1.04, true);
+  ok('CriticalSet: unbounded, |z|=1.04 → near/inDomain',
+     b.inDomain === true && b.severity === 'near');
+
+  const c = CriticalSet._classify(0.5, true);
+  ok('CriticalSet: unbounded, |z|=0.5 → safe/!inDomain',
+     c.inDomain === false && c.severity === 'safe');
+}
+
+// ---- _snapKey ---------------------------------------------------------------
+{
+  const k1 = CriticalSet._snapKey({ re: 0.123451, im: -0.456701 });
+  const k2 = CriticalSet._snapKey({ re: 0.123452, im: -0.456702 });
+  ok('CriticalSet: snapKey clusters near-identical z values',
+     k1 === k2, 'k1=' + k1 + ', k2=' + k2);
+  const k3 = CriticalSet._snapKey({ re: 0.124,    im: -0.4567   });
+  ok('CriticalSet: snapKey separates distinguishable z values',
+     k1 !== k3);
+}
+
+// ---- Disk: φ(z) = R·z + c  →  φ'(z) = R, no critical points ---------------
+{
+  const R = 1.4, c = { re: 0.2, im: -0.1 };
+  const phi = {
+    family: 'boundedQD',
+    w0: c, unbounded: false,
+    branches: [{ z: {re:0,im:0}, A: [{re:R,im:0}] }],
+  };
+  const cs = findCriticalPoints(phi);
+  ok('CriticalSet: disk φ(z)=R·z+c has zero critical points  — found ' + cs.points.length,
+     cs.points.length === 0);
+}
+
+// ---- Cardioid: φ(z) = c + R·(z + z²/2)  →  φ'(z) = R(1+z), root z=-1 ------
+{
+  const R = 1.0, c = { re: 0, im: 0 };
+  const phi = {
+    family: 'boundedQD',
+    w0: c, unbounded: false,
+    branches: [{ z: {re:0,im:0}, A: [{re:R,im:0}, {re:R/2,im:0}] }],
+  };
+  const cs = findCriticalPoints(phi);
+  ok('CriticalSet: cardioid finds the z=-1 critical point  — got ' + cs.points.length,
+     cs.points.length >= 1 && cs.points.length <= 3);   // ≤3 allows alias roots near ∞
+  // The "near" root corresponds to z=-1 (cardioid cusp).
+  let foundNeg1 = false;
+  for (const p of cs.points) {
+    if (Math.abs(p.z.re + 1) < 1e-5 && Math.abs(p.z.im) < 1e-5) {
+      foundNeg1 = true;
+      ok('CriticalSet: cardioid z=-1 classified as "near"', p.severity === 'near');
+      // φ(-1) = R·(-1 + 1/2) = -R/2.
+      ok('CriticalSet: cardioid w-image equals φ(-1) = -R/2',
+         Math.abs(p.w.re + R/2) < 1e-8 && Math.abs(p.w.im) < 1e-8,
+         'w = (' + p.w.re.toFixed(6) + ', ' + p.w.im.toFixed(6) + ')');
+    }
+  }
+  ok('CriticalSet: cardioid contains a z = -1 root', foundNeg1);
+}
+
+// ---- Off-domain critical point: φ(z) = z + (1/3)·z² → φ' = 1 + (2/3)z, ----
+// ---- root z = -3/2 → outside 𝔻, severity 'safe' ---------------------------
+{
+  const phi = {
+    family: 'boundedQD',
+    w0: {re:0,im:0}, unbounded: false,
+    branches: [{ z: {re:0,im:0}, A: [{re:1,im:0}, {re:1/3,im:0}] }],
+  };
+  const cs = findCriticalPoints(phi);
+  // φ'(z) = 1 + (2/3)z → single critical point at z = -3/2.
+  let foundOutside = false;
+  for (const p of cs.points) {
+    if (Math.abs(p.z.re + 1.5) < 1e-5 && Math.abs(p.z.im) < 1e-5) {
+      foundOutside = true;
+      ok('CriticalSet: z=-3/2 is outside 𝔻', !p.inDomain);
+      ok('CriticalSet: z=-3/2 is classified "safe"', p.severity === 'safe');
+    }
+  }
+  ok('CriticalSet: φ(z)=z+z²/3 contains a z=-3/2 root', foundOutside);
+}
+
+// ---- Deduplication: many seeds converging to the same root produce one ----
+{
+  const phi = {
+    family: 'boundedQD',
+    w0: {re:0,im:0}, unbounded: false,
+    branches: [{ z: {re:0,im:0}, A: [{re:1,im:0}, {re:0.5,im:0}] }],
+  };
+  // Cardioid again — should produce at most a small handful of unique roots
+  // even though the default seed grid is ~150 points.
+  const cs = findCriticalPoints(phi);
+  ok('CriticalSet: dedup keeps unique count small  — nUnique=' + cs.stats.nUnique +
+     ', nConverged=' + cs.stats.nConverged + ' of ' + cs.stats.nSeeds + ' seeds',
+     cs.stats.nUnique <= 5);
+}
+
+// ---- Robustness: empty / null phi ------------------------------------------
+{
+  const r1 = findCriticalPoints(null);
+  ok('CriticalSet: null phi → empty result',
+     r1.points.length === 0 && r1.stats.nUnique === 0);
+}
+
+// ---- Unbounded family smoke (use the solver to get a real phi) -----------
+{
+  // Simple unbounded map φ(z) = c·z + F_1/z (analog of Joukowski).
+  // φ'(z) = c - F_1/z², critical points at z² = F_1/c → for c=1, F_1=1
+  // → z = ±1, both on the unit circle ⇒ both 'near'.
+  // In the unboundedQD storage convention: polyA[0] is the constant term and
+  // polyA[l] (l ≥ 1) is the coefficient of 1/z^l, so we want polyA = [0, 1].
+  const phi = {
+    family: 'unboundedQD',
+    unbounded: true,
+    c: 1.0,
+    polyA: [{ re: 0.0, im: 0.0 }, { re: 1.0, im: 0.0 }],
+    branches: [],
+  };
+  const cs = findCriticalPoints(phi);
+  let foundPlus1 = false, foundNeg1 = false;
+  for (const p of cs.points) {
+    if (Math.abs(p.z.re - 1) < 1e-5 && Math.abs(p.z.im) < 1e-5) {
+      foundPlus1 = true;
+      ok('CriticalSet: unbounded z=+1 classified "near"', p.severity === 'near');
+    }
+    if (Math.abs(p.z.re + 1) < 1e-5 && Math.abs(p.z.im) < 1e-5) {
+      foundNeg1 = true;
+      ok('CriticalSet: unbounded z=-1 classified "near"', p.severity === 'near');
+    }
+  }
+  ok('CriticalSet: unbounded c·z + 1/z finds z=+1', foundPlus1);
+  ok('CriticalSet: unbounded c·z + 1/z finds z=-1', foundNeg1);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

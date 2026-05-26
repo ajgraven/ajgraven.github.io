@@ -479,6 +479,7 @@ const state = {
   samples: 500,
   autoFit: false,        // off by default — slider drags shouldn't reframe the view
   vectorFieldMode: 'off',    // 'off' | 'polya' | 'external'
+  showCriticalSet: false,    // overlay w-images of {z : φ'(z) = 0}
 
   // Solver result
   current: null,             // { primary, alternates, w0, attempts }
@@ -520,6 +521,13 @@ const state = {
 
     seed:              null,   // null → time-based
   },
+
+  // View mode (HANDOFF #30): the former "Direct problem" tab is folded
+  // into this tab as a segmented toggle. 'inverse' shows the existing
+  // QD/LQD UI; 'direct' shows the relocated #controls-direct content
+  // (mounted lazily by QD.Direct._mountUI on first switch).
+  viewMode:       'inverse',     // 'inverse' | 'direct'
+  directMounted:  false,
 };
 
 // ===========================================================================
@@ -664,9 +672,14 @@ function buildHData() {
     }
     poles.push({ a, principal });
   }
-  // Polynomial part of h (unbounded mode only).
+  // Polynomial part of h. Allowed in any "unbounded-like" mode where the
+  // panel is meaningful (classical unbounded + both unbounded-LQD variants).
+  // NB: the unbounded-LQD solvers currently DON'T match polynomial-h in
+  // their (★) system — see solver-uqd-lqd.js header. The validation below
+  // (in solveAndRender via buildNormalization) surfaces a clear error to
+  // the user when they attempt to solve with a nonzero LQD polynomial part.
   const polyPart = [];
-  if (state.mode === 'unbounded' && state.polyDegree >= 0) {
+  if (modeAllowsPoly(state.mode) && state.polyDegree >= 0) {
     for (let l = 0; l <= state.polyDegree; l++) {
       const c = QD.Complex.parse(state.polyCoeffs[l] ?? '0');
       if (!c) return { error: `Poly coef C∞,${l}: invalid value` };
@@ -738,7 +751,7 @@ function renderPolesList() {
     div.innerHTML = `
       <div class="pole-header">
         <span class="pole-num">Pole ${idx + 1}</span>
-        <button class="small danger" data-action="remove">×</button>
+        <button type="button" class="small danger" data-action="remove" title="Remove this pole">×</button>
       </div>
       <div class="row">
         <label>a${sub(idx+1)} =
@@ -786,17 +799,19 @@ function renderPolesList() {
     }
     list.appendChild(div);
   });
+  if (typeof refreshHText === 'function') refreshHText();
 }
 
 // Render the polynomial-part coefficient list. One block per C_{∞,l} for
 // l = 0..polyDegree, with magnitude/argument sliders matching the residue
-// rows. Visible only in unbounded mode with polyDegree ≥ 0.
+// rows. Visible in any mode where polynomial-h is meaningful (classical
+// unbounded + both unbounded-LQD variants — see modeAllowsPoly).
 function renderPolyCoefList() {
   const list = $('#poly-coefs-list');
   if (!list) return;
   list.innerHTML = '';
   const deg = state.polyDegree;
-  if (state.mode !== 'unbounded' || deg < 0) return;
+  if (!modeAllowsPoly(state.mode) || deg < 0) return;
 
   // Ensure polyCoeffs has at least deg+1 entries (pad with '0').
   while (state.polyCoeffs.length < deg + 1) state.polyCoeffs.push('0');
@@ -832,6 +847,7 @@ function renderPolyCoefList() {
     `;
     list.appendChild(block);
   }
+  if (typeof refreshHText === 'function') refreshHText();
 }
 
 function escapeAttr(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
@@ -863,9 +879,11 @@ function addPole() {
 }
 function removePoleAt(idx) {
   state.poles.splice(idx, 1);
-  if (state.poles.length === 0) {
-    state.poles.push({ a: '0', order: 1, residues: ['1'] });
-  }
+  // No defensive "insert a default if empty" — an empty pole list is a valid
+  // user intent (e.g. h = polynomial-only in unbounded mode). The solver
+  // surfaces "no poles entered" if appropriate. Without this, clicking × on
+  // the last remaining pole silently re-inserts a default and looks like
+  // "delete did nothing while h-text picked up 1/w".
   renderPolesList();
   scheduleSolve();
 }
@@ -1111,7 +1129,13 @@ function describeTestClass(v) {
   return `monomials w⁰…w^${v.maxDeg}`;
 }
 
-function escapeHTML(s) { return String(s).replace(/[&<>]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])); }
+// escapeHTML: delegates to QD.QoL.escapeHTML (HANDOFF #35 consolidation).
+// Falls back to a local impl if qol.js failed to load.
+function escapeHTML(s) {
+  return (window.QD && window.QD.QoL && window.QD.QoL.escapeHTML)
+    ? window.QD.QoL.escapeHTML(s)
+    : String(s).replace(/[&<>]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
+}
 function formatExp(x) {
   if (x === null || x === undefined || !isFinite(x)) return '—';
   if (x === 0) return '0';
@@ -1520,6 +1544,13 @@ function startBackgroundAltSearch(hData, norm) {
 // ===========================================================================
 // Canvas plotting
 // ===========================================================================
+
+// Hover hit-test radius for the pole-proximity annotation in the readout
+// (HANDOFF #33 / #35). Larger than the click hit-radius (9 px, the default
+// `radius` parameter on _hitTestPole) so the cursor doesn't need to be
+// pixel-perfect over the pole dot to see its label.
+const POLE_HOVER_HIT_RADIUS_PX = 12;
+
 class DomainPlot {
   constructor(canvas, readout) {
     this.canvas = canvas;
@@ -1578,7 +1609,26 @@ class DomainPlot {
     let panning = false, lastX = 0, lastY = 0;
     let draggingPole = -1;          // index, or -1
 
+    // Belt-and-suspenders gate: the QD/LQD inverse tab is the only one that
+    // owns the main #canvas as a 2D drawing surface; the Schwarz and Riemann-
+    // sphere tabs overlay their own GL canvases.  These handlers must early-
+    // return when those other tabs are active, otherwise a drag/wheel in
+    // those tabs would trigger this.render() and repaint the QD plot over
+    // the other tab's content.  (The sphere tab additionally puts its GL
+    // canvas on top with pointer-events:auto so most events never reach
+    // this listener — this check is the second line of defense, and the
+    // only line of defense for the Schwarz tab whose GL canvas sits below.)
+    //
+    // Exception: an in-progress pan or pole-drag started on the QD tab is
+    // allowed to complete even if the user mid-drag switched tabs (avoids
+    // a stuck "panning=true" state).
+    function _qdTabActive() {
+      const btn = document.querySelector('.tab-btn.active');
+      return btn && btn.dataset.tab === 'qd';
+    }
+
     this.canvas.addEventListener('mousedown', e => {
+      if (!_qdTabActive()) return;
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
       // Hit-test a pole first; if hit, take ownership of this drag for the
@@ -1595,6 +1645,11 @@ class DomainPlot {
     });
 
     window.addEventListener('mousemove', e => {
+      // Allow an already-in-progress drag/pole-drag to finish even after a
+      // tab switch.  Brand-new hover/readout updates require the QD tab.
+      const inProgressDrag = panning || draggingPole >= 0;
+      if (!inProgressDrag && !_qdTabActive()) return;
+
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
 
@@ -1615,9 +1670,20 @@ class DomainPlot {
       // elsewhere) — only when the cursor is over the canvas.
       if (x >= 0 && x <= this.cssW && y >= 0 && y <= this.cssH) {
         const w = this.toWorld(x, y);
-        this.readout.textContent = `w = ${w.re.toFixed(4)} ${w.im >= 0 ? '+' : '-'} ${Math.abs(w.im).toFixed(4)}i`;
+        let text = `w = ${w.re.toFixed(4)} ${w.im >= 0 ? '+' : '-'} ${Math.abs(w.im).toFixed(4)}i`;
+        // Append nearby-pole annotation when the cursor is within the
+        // hit-test radius (HANDOFF #33). Useful for quickly identifying
+        // which pole a residue belongs to as the user scans.
+        const hitIdx = this._hitTestPole(x, y, POLE_HOVER_HIT_RADIUS_PX);
+        if (hitIdx >= 0) {
+          const a = this.data.poles[hitIdx];
+          const SUBS = ['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉'];
+          const sub = String(hitIdx + 1).split('').map(d => SUBS[+d] || d).join('');
+          text += `  ·  near pole a${sub} = ${a.re.toFixed(3)}${a.im >= 0 ? '+' : '-'}${Math.abs(a.im).toFixed(3)}i`;
+        }
+        this.readout.textContent = text;
         if (!panning && draggingPole < 0) {
-          this.canvas.style.cursor = this._hitTestPole(x, y) >= 0 ? 'pointer' : 'grab';
+          this.canvas.style.cursor = hitIdx >= 0 ? 'pointer' : 'grab';
         }
       }
     });
@@ -1635,6 +1701,7 @@ class DomainPlot {
     });
 
     this.canvas.addEventListener('wheel', e => {
+      if (!_qdTabActive()) return;
       e.preventDefault();
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
@@ -1708,6 +1775,12 @@ class DomainPlot {
     }
     if (this.data && this.data.poles)  this.drawPoles();
     if (this.data && this.data.w0)     this.drawW0();
+    // Critical-set image overlay (zeros of φ', mapped to w-plane).  Drawn
+    // last so the markers sit on top of everything; lazy-computed and
+    // cached on state.current.criticalSet to avoid recomputing per render.
+    if (state.showCriticalSet && this.data && this.data.phi) {
+      this.drawCriticalSet();
+    }
   }
 
   drawOverlayBoundary() {
@@ -2057,6 +2130,100 @@ class DomainPlot {
     c.textBaseline = 'top';
     c.fillText('φ(0)', s.x + 6, s.y + 4);
   }
+
+  // -------------------------------------------------------------------------
+  // Critical-set overlay: w-plane images of {z : φ'(z) = 0}.
+  //
+  // Computed lazily on first request (and on toggle-on after a fresh solve),
+  // cached on state.current.criticalSet so subsequent pans/zooms don't pay
+  // the Newton cost.  The cache is keyed by reference identity of
+  // this.data.phi — if a new solve produces a new phi object, the cache
+  // is recomputed automatically.
+  //
+  // Visual encoding:
+  //   severity 'critical' (zero of φ' strictly inside the relevant disk):
+  //     red filled disk, 6 px radius.  This is the bad case — φ is
+  //     non-univalent.
+  //   severity 'near'     (|z| within 0.05 of the unit circle):
+  //     orange filled disk, 5 px radius.  Imminent-degeneracy warning.
+  //   severity 'safe'     (zero of φ' outside the relevant disk):
+  //     small gray hollow circle, 3.5 px radius.  Background info.
+  //
+  // Each marker carries a 1-letter tag showing severity.
+  // -------------------------------------------------------------------------
+  drawCriticalSet() {
+    const phi = this.data.phi;
+    if (!phi || typeof QD === 'undefined' || !QD.findCriticalPoints) return;
+
+    // Look up / refresh cache.
+    if (!state.current) return;
+    const cached = state.current.criticalSet;
+    let cs;
+    if (cached && cached._phiRef === phi) {
+      cs = cached;
+    } else {
+      try {
+        cs = QD.findCriticalPoints(phi);
+      } catch (e) {
+        return;       // silent on solver error — overlay is purely diagnostic
+      }
+      cs._phiRef = phi;
+      state.current.criticalSet = cs;
+    }
+    if (!cs.points || cs.points.length === 0) return;
+
+    const c = this.ctx;
+    c.save();
+    c.font = '10px ui-monospace, Consolas, monospace';
+    c.textBaseline = 'middle';
+    c.textAlign    = 'left';
+
+    for (const p of cs.points) {
+      const s = this.toScreen(p.w.re, p.w.im);
+      // Skip if off-screen by a large margin (saves draw work; markers very
+      // far outside the visible region clutter the corner-clip).
+      if (s.x < -40 || s.x > this.cssW + 40) continue;
+      if (s.y < -40 || s.y > this.cssH + 40) continue;
+
+      let fill, stroke, r, tag;
+      switch (p.severity) {
+        case 'critical':
+          fill   = '#d12d2d';
+          stroke = '#ffffff';
+          r      = 6.0;
+          tag    = '!';
+          break;
+        case 'near':
+          fill   = '#d97706';   // orange
+          stroke = '#ffffff';
+          r      = 5.0;
+          tag    = '~';
+          break;
+        case 'safe':
+        default:
+          fill   = null;        // hollow
+          stroke = '#888888';
+          r      = 3.5;
+          tag    = '';
+          break;
+      }
+      c.beginPath();
+      c.arc(s.x, s.y, r, 0, 2 * Math.PI);
+      if (fill) {
+        c.fillStyle = fill;
+        c.fill();
+      }
+      c.strokeStyle = stroke;
+      c.lineWidth   = (p.severity === 'safe') ? 1.2 : 1.6;
+      c.stroke();
+
+      if (tag) {
+        c.fillStyle = (p.severity === 'critical') ? '#d12d2d' : '#a85706';
+        c.fillText(tag + ' |z|=' + p.absZ.toFixed(3), s.x + r + 3, s.y);
+      }
+    }
+    c.restore();
+  }
 }
 
 function formatTick(v, step) {
@@ -2068,6 +2235,32 @@ function formatTick(v, step) {
 // ---------- Wire everything up ------------------------------------------
 const plot = new DomainPlot($('#canvas'), $('#plot-readout'));
 window.addEventListener('resize', () => plot.resize());
+
+// HANDOFF #34 (revised): re-render the QD plot whenever the QD tab becomes
+// active. The 2D canvas is shared with Schwarz (CPU pyramid + orbit polyline)
+// and Param-slice (image data); without this the user sees stale graphics
+// from the previous tab until they pan, zoom, or re-solve.
+//
+// We MUST defer the render to a microtask so it runs AFTER every other
+// synchronous tab-changed listener for this dispatch. In particular,
+// schwarz-ui.js's exit branch (registered later in script load order)
+// clears the 2D canvas via ctx.clearRect — if we render synchronously we
+// fire first and Schwarz's clear immediately wipes the freshly-drawn
+// pixels (the bug fixed here). Microtasks drain before the browser
+// paints, so there is no flicker.
+//
+// Future tabs adding their own exit-clear would be vulnerable to the
+// same listener-order trap; keep this microtask deferral.
+document.addEventListener('tab-changed', e => {
+  if (!e.detail || e.detail.tab !== 'qd') return;
+  queueMicrotask(() => {
+    // Stale-tab guard: a rapid qd → schwarz double-click would otherwise
+    // briefly paint the QD canvas while the user is already on Schwarz.
+    const active = document.querySelector('.tab-btn.active');
+    if (!active || active.dataset.tab !== 'qd') return;
+    plot.resize();
+  });
+});
 
 // Click-and-drag of quadrature nodes on the plot. Live updates while
 // dragging via quick-solve; on release run the full solver pipeline so
@@ -2087,7 +2280,104 @@ plot.onPoleDragEnd = () => { scheduleSolve(); };
 
 renderPolesList();
 renderPolyCoefList();
-$('#poly-part-section').classList.toggle('hidden', state.mode !== 'unbounded');
+$('#poly-part-section').classList.toggle('hidden', !modeAllowsPoly(state.mode));
+
+// Polynomial part of h is meaningful exactly in the three unbounded family
+// panels. Keep this predicate centralized so refreshHText / parseAndApplyHText
+// agree with what the mode descriptors expose (cards.poly).
+function modeAllowsPoly(mode) {
+  return mode === 'unbounded' ||
+         mode === 'lqd-unbounded' ||
+         mode === 'lqd-unbounded-singular';
+}
+
+// ---------- Custom h(w) text input --------------------------------------
+// The #h-text input is a two-way-coupled mirror of the structured pole grid
+// and polynomial-part coefficient list. refreshHText() rebuilds the text
+// from current state; parseAndApplyHText() goes the other direction via
+// QD.parseH (Phase 1 strict PFD walker → Phase 2 general-rational fallback).
+//
+// Refresh is called from renderPolesList / renderPolyCoefList / setMode /
+// applyPreset so the text mirrors structural state. The per-keystroke
+// pole-residue text-field edits don't trigger a refresh (they'd cause
+// double-translation churn while the user types); the next solve / preset
+// / mode switch syncs the text box.
+function refreshHText() {
+  const inp = document.getElementById('h-text');
+  if (!inp) return;
+  try {
+    const poles = state.poles.map(po => {
+      const a = QD.Complex.parse(po.a) || { re: 0, im: 0 };
+      const residues = po.residues.slice(0, po.order).map(r =>
+        QD.Complex.parse(r) || { re: 0, im: 0 });
+      return { a, order: po.order, residues };
+    });
+    let polyCoeffs = [];
+    if (modeAllowsPoly(state.mode) && state.polyDegree >= 0) {
+      polyCoeffs = state.polyCoeffs.slice(0, state.polyDegree + 1).map(s =>
+        QD.Complex.parse(s) || { re: 0, im: 0 });
+    }
+    inp.value = QD.formatH({ poles, polyCoeffs });
+    setHTextMsg('');
+  } catch (e) {
+    // Defensive: never let formatter errors break the panel.
+  }
+}
+
+function setHTextMsg(msg, kind) {
+  const el = document.getElementById('h-text-msg');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = (kind === 'warn') ? '#9a6a00' : '#b53030';
+}
+
+function parseAndApplyHText() {
+  const inp = document.getElementById('h-text');
+  if (!inp) return;
+  const expr = inp.value.trim();
+  if (!expr) { setHTextMsg('Enter an expression in w.'); return; }
+  let parsed;
+  try {
+    parsed = QD.parseH(expr, math, { mode: state.mode });
+  } catch (e) {
+    setHTextMsg(e.message || String(e));
+    return;
+  }
+
+  // Convert parsed.poles (Complex-typed) back to the state's string form.
+  if (parsed.poles.length === 0) {
+    // Need at least one row in the grid so the user can extend it.
+    state.poles = [{ a: '0', order: 1, residues: ['0'] }];
+  } else {
+    state.poles = parsed.poles.map(p => ({
+      a: QD.Complex.format(p.a),
+      order: p.order,
+      residues: p.residues.map(c => QD.Complex.format(c)),
+    }));
+  }
+
+  if (modeAllowsPoly(state.mode)) {
+    if (parsed.polyCoeffs.length > 0) {
+      state.polyCoeffs = parsed.polyCoeffs.map(c => QD.Complex.format(c));
+      state.polyDegree = parsed.polyCoeffs.length - 1;
+    } else {
+      state.polyDegree = -1;
+      state.polyCoeffs = [];
+    }
+    syncPolyDegreeInput();
+  }
+
+  for (const k of Object.keys(magSliderMax)) delete magSliderMax[k];
+  renderPolesList();
+  renderPolyCoefList();
+  markAsCustom();
+  if (parsed.warnings && parsed.warnings.length) {
+    setHTextMsg('Parsed with warning: ' + parsed.warnings[0], 'warn');
+  } else {
+    setHTextMsg('');
+  }
+  scheduleSolve();
+}
 
 // ---------- Preset dropdown ---------------------------------------------
 function populatePresetDropdown() {
@@ -2294,11 +2584,14 @@ $('#poles-list').addEventListener('input', e => {
   scheduleSolve();
 });
 $('#poles-list').addEventListener('click', e => {
-  if (e.target.dataset.action === 'remove') {
-    const poleDiv = e.target.closest('.pole');
-    markAsCustom();
-    removePoleAt(+poleDiv.dataset.idx);
-  }
+  // Use closest() so the handler still fires if the click lands on a child
+  // of the remove button (e.g. an inner glyph element).
+  const removeBtn = e.target.closest('[data-action="remove"]');
+  if (!removeBtn) return;
+  const poleDiv = removeBtn.closest('.pole');
+  if (!poleDiv) return;
+  markAsCustom();
+  removePoleAt(+poleDiv.dataset.idx);
 });
 
 // When a slider drag ENDS (mouseup), re-run the full solver to refresh
@@ -2311,6 +2604,132 @@ $('#poles-list').addEventListener('change', e => {
 });
 $('#add-pole').addEventListener('click', () => { markAsCustom(); addPole(); });
 
+// ---------- View-mode toggle (HANDOFF #30) ------------------------------
+// Inverse | direct segmented control at the top of the QD tab. The inverse
+// view is the existing QD/LQD UI (wrapped in #qd-inverse-content in
+// index.html); the direct view is the former Direct-problem tab UI,
+// relocated into #controls-direct (now a sibling of #qd-inverse-content
+// inside #controls-qd). Direct UI is lazy-mounted on first switch.
+function mountViewToggle() {
+  const qdRoot = document.getElementById('controls-qd');
+  if (!qdRoot) return;
+  const card = document.createElement('section');
+  card.id = 'qd-view-toggle';
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="segmented" role="tablist" aria-label="View mode">
+      <button class="seg-btn active" data-view="inverse" type="button">inverse</button>
+      <button class="seg-btn"        data-view="direct"  type="button">direct</button>
+    </div>
+  `;
+  // Insert as the first child of #controls-qd, BEFORE #qd-inverse-content.
+  qdRoot.insertBefore(card, qdRoot.firstChild);
+  card.querySelectorAll('.seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => setViewMode(btn.dataset.view));
+  });
+}
+
+function setViewMode(mode) {
+  if (mode !== 'inverse' && mode !== 'direct') return;
+  if (mode === state.viewMode) return;
+  state.viewMode = mode;
+  // Toggle segmented-control highlight.
+  document.querySelectorAll('#qd-view-toggle .seg-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === mode);
+  });
+  const inv = document.getElementById('qd-inverse-content');
+  const dir = document.getElementById('controls-direct');
+  if (inv) inv.style.display = (mode === 'inverse') ? '' : 'none';
+  if (dir) dir.style.display = (mode === 'direct')  ? '' : 'none';
+  if (mode === 'direct') {
+    // Lazy-mount Direct UI on first switch.
+    if (!state.directMounted && window.QD && QD.Direct && QD.Direct._mountUI) {
+      QD.Direct._mountUI();
+      state.directMounted = true;
+    }
+    if (window.QD && QD.Direct && QD.Direct._activate) QD.Direct._activate();
+  }
+}
+
+mountViewToggle();
+
+// -----------------------------------------------------------------------------
+// QoL: attach "?" help buttons to the inverse-tab cards (HANDOFF #33).
+// Static cards in index.html; lazy-mounted cards (Direct, Schwarz, Param-slice)
+// wire their own help inside their respective ui modules.
+// -----------------------------------------------------------------------------
+function mountQolHelp() {
+  if (!window.QD || !window.QD.QoL || !window.QD.QoL.attachHelp) return;
+  const H = window.QD.QoL.attachHelp;
+  const headerOf = (cardSelector) => {
+    const card = document.querySelector(cardSelector);
+    return card ? card.querySelector('h2') : null;
+  };
+  // Domain type
+  H(headerOf('#domain-mode-card'),
+    `<b>Domain type.</b> Pick which family the inverse solver should target.
+     <i>Bounded</i> Ω is the classical case (Riemann map of 𝔻); <i>Unbounded</i>
+     Ω uses 𝔻* with a conformal radius c at ∞. <i>LQD</i> variants add a
+     log-weighted exponent; <i>singular</i> variants allow a higher-order pole
+     of h at the origin (with a free residue q).`);
+  // Quadrature function h(w)
+  H(headerOf('#h-card'),
+    `<b>Quadrature data h(w).</b> Sum of rational and polynomial terms.
+     Edit poles + residues structurally below, or paste a math.js expression
+     in the textbox at the top. The inverse solver finds Ω whose
+     quadrature data matches this h.`);
+  H(headerOf('#q-card'),
+    `<b>Residue at the origin (q).</b> For <i>singular</i> LQDs, q is a free
+     parameter representing the residue of the log-weighted Schwarz function
+     at w=0. The solver enforces a closed-form constraint linking q to the
+     finite poles and any polynomial part of h.`);
+  H(headerOf('#w0-card'),
+    `<b>Riemann map center φ(0).</b> The image of the disk center 0 ∈ 𝔻 under
+     the Riemann map. Together with c (the conformal radius) this fixes the
+     gauge of φ. For bounded families w₀ is a free parameter; for unbounded
+     families it is implicit and not editable.`);
+  H(headerOf('#c-card'),
+    `<b>Conformal radius c = φ'(∞).</b> For unbounded families, scales the
+     Riemann map's behaviour at infinity. Together with w₀ this fixes the
+     gauge of φ.`);
+  H(headerOf('#solver-settings-card'),
+    `<b>Solver settings.</b> Choose a preset (Fast / Default / Thorough) or
+     fine-tune via the <i>Search options</i> panel. The preset balances
+     Newton iterations, identity-check sample count, and how many alternate
+     solution branches the solver attempts to find.`);
+  H(headerOf('#search-options-card'),
+    `<b>Search options.</b> Each phase is a distinct strategy for finding a φ
+     consistent with h(w). Direct = single Newton from the initial guess;
+     continuation = parameter-homotopy from a related solved scenario;
+     multistart = many random seeds; diverse + deflation = explicit
+     branch-finding.`);
+  H(headerOf('#status-card'),
+    `<b>Status.</b> Live readout of the solver: convergence diagnostics,
+     identity residual, univalence, and which branches succeeded.`);
+  H(headerOf('#riemann-map-card'),
+    `<b>Riemann map φ(z).</b> The solved φ as a closed-form rational
+     expression (bounded) or rational+polynomial (unbounded). Each pole
+     of h corresponds to a pole structure of φ inside 𝔻.`);
+  H(headerOf('#alternates-card'),
+    `<b>Alternate solutions.</b> When more than one φ satisfies the same h
+     (multiple branches), the solver lists them here. Click an alternate to
+     promote it to the primary.`);
+}
+mountQolHelp();
+
+// QoL: copy button on the h(w) text input (HANDOFF #33).
+(function mountHTextCopyButton() {
+  if (!window.QD || !window.QD.QoL || !window.QD.QoL.copyButton) return;
+  const parseBtn = document.getElementById('h-parse');
+  if (!parseBtn) return;
+  const copy = window.QD.QoL.copyButton(() => {
+    const inp = document.getElementById('h-text');
+    return inp ? inp.value : '';
+  }, { title: 'Copy h(w) text' });
+  copy.style.marginLeft = '6px';
+  parseBtn.parentNode.insertBefore(copy, parseBtn.nextSibling);
+})();
+
 // Domain-type toggle
 $$('input[name="domain-mode"]').forEach(r => r.addEventListener('change', e => {
   setMode(e.target.value);
@@ -2320,6 +2739,12 @@ $$('input[name="domain-mode"]').forEach(r => r.addEventListener('change', e => {
 populatePresetDropdown();
 $('#preset-select').addEventListener('change', e => {
   if (e.target.value) applyPreset(e.target.value);
+});
+
+// Custom h(w) parse button + Enter-to-parse on the text input.
+$('#h-parse').addEventListener('click', () => parseAndApplyHText());
+$('#h-text').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); parseAndApplyHText(); }
 });
 
 // w0 mode (bounded only)
@@ -2472,6 +2897,10 @@ $('#vector-field-mode').addEventListener('change', e => {
   state.vectorFieldMode = e.target.value;
   plot.render();
 });
+$('#critical-set-toggle').addEventListener('change', e => {
+  state.showCriticalSet = e.target.checked;
+  plot.render();
+});
 
 // ---------- Search-options panel wiring ----------------------------------
 // Every field updates state.searchOptions on `input`/`change`. Inputs that
@@ -2583,9 +3012,9 @@ $('#alternates-list').addEventListener('click', e => {
 // Initial solve
 solveAndRender();
 
-// ---------- Hooks for the Direct-problem tab ----------------------------
+// ---------- Hooks for the Direct view (within the QD tab) ----------------------------
 // direct-ui.js calls these to (a) push a ∂Ω preview onto the shared canvas,
-// (b) send a computed h back to the QD/LQD tab and switch tabs.
+// (b) send a computed h back to the QD tab's inverse view and switch view modes.
 window.QD = window.QD || {};
 window.QD.Direct = window.QD.Direct || {};
 
@@ -2689,7 +3118,90 @@ window.QD.Direct._sendHToInverseTab = function (hData, opts) {
   renderPolesList();
   document.getElementById('preset-select').value = '';
 
-  // Switch tabs and re-solve.
-  document.querySelector('.tab-btn[data-tab="qd"]').click();
+  // Switch view-mode to inverse and re-solve (HANDOFF #30: the Direct UI is
+  // now a view within the QD tab, so this is a view-mode switch rather than
+  // a tab switch).
+  setViewMode('inverse');
+  solveAndRender();
+};
+
+// =============================================================================
+// Public hooks for the Parameter-slice tab.
+//
+// The slice tab needs two things from ui.js:
+//   • snapshotScenario()              — read out the current { hData, norm, mode }
+//   • loadScenarioIntoQdTab(s, mode)  — push a scenario back into state, re-solve,
+//                                       and switch to the QD tab.
+//
+// We expose these on window.QD_UI so param-slice-ui.js can find them
+// without having to be loaded after this file.
+// =============================================================================
+window.QD_UI = window.QD_UI || {};
+
+window.QD_UI.snapshotScenario = function () {
+  const built = buildHData();
+  if (!built || built.error) return null;
+  const norm = buildNormalization(built);
+  if (norm.error) return null;
+  // Defensive: ensure polyPart is always present (slice UI inspects it).
+  if (!built.polyPart) built.polyPart = [];
+  return { hData: built, norm, mode: state.mode };
+};
+
+window.QD_UI.loadScenarioIntoQdTab = function (scenario, mode) {
+  if (!scenario || !scenario.hData) return;
+  // Switch mode first (re-runs setMode's side-effects: card visibility,
+  // preset dropdown, polynomial panel toggle). setMode is a no-op if the
+  // mode hasn't changed.
+  if (mode && mode !== state.mode) {
+    const radio = document.querySelector(`input[name="domain-mode"][value="${mode}"]`);
+    if (radio) radio.checked = true;
+    setMode(mode);
+  }
+  // Reflect hData into state.poles + state.polyDegree + state.polyCoeffs.
+  const hData = scenario.hData;
+  state.poles = hData.poles.map(p => ({
+    a: QD.Complex.toString(p.a, 6),
+    order: p.principal.length,
+    residues: p.principal.map(c => QD.Complex.toString(c, 6)),
+  }));
+  const polyPart = hData.polyPart || [];
+  state.polyDegree = polyPart.length - 1;
+  state.polyCoeffs = polyPart.map(c => QD.Complex.toString(c, 6));
+
+  // Reflect norm fields (c, q, w0) into state + DOM.
+  const norm = scenario.norm || {};
+  if (typeof norm.c === 'number' && norm.c > 0) {
+    state.c = norm.c;
+    const cInput  = $('#c-manual');
+    const cSlider = $('#c-slider');
+    const cVal    = $('#c-val');
+    if (cInput)  cInput.value  = norm.c.toString();
+    if (cSlider) cSlider.value = norm.c.toString();
+    if (cVal)    cVal.textContent = norm.c.toFixed(3);
+  }
+  if (norm.q) {
+    state.q = QD.Complex.toString(norm.q, 6);
+    const qInput = $('#q-manual');
+    if (qInput) qInput.value = state.q;
+  }
+  if (norm.w0) {
+    state.w0Manual = QD.Complex.toString(norm.w0, 6);
+    state.w0Mode = 'manual';
+    const wManual = $('#w0-manual');
+    const wRadio  = document.querySelector('input[name="w0mode"][value="manual"]');
+    if (wManual) { wManual.value = state.w0Manual; wManual.disabled = false; }
+    if (wRadio)  { wRadio.checked = true; }
+  }
+
+  syncPolyDegreeInput();
+  renderPolesList();
+  renderPolyCoefList();
+  $('#poly-part-section').classList.toggle('hidden', !modeAllowsPoly(state.mode));
+  markAsCustom();
+
+  // Switch to the QD tab + run the full solver.
+  const tabBtn = document.querySelector('.tab-btn[data-tab="qd"]');
+  if (tabBtn) tabBtn.click();
   solveAndRender();
 };

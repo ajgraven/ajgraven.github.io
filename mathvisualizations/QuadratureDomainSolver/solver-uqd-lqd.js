@@ -44,13 +44,25 @@
 //     finite-pole residue: C_{j,s} · (-1)^{s-1} · binom(k+s-2, s-1) / a_j^{k+s-1}
 //     ∞ residue contribution from polyPart of h: -C_{∞, k-1}  (only if degree k-1 ≤ m_∞)
 //
-// IMPORTANT — polynomial part of h:  Per the user's answer (Q2), polynomial
-// terms in h affect r# (not separate F_l unknowns). The full inverse-Faber
-// machinery accounting for a polynomial-part h is deferred to a follow-up
-// (this file currently handles only finite-pole h; the polyPart contribution
-// to the IDENTITY VERIFIER's RHS is included so the verifier doesn't lie
-// when the user does feed in a polyPart, but the SOLVER will not yet match
-// it correctly — flagged as TODO).
+// Polynomial-h support (Andrew Graven derivation, HANDOFF entry #21):
+//   The φ parameterization is extended in evalPhi / phiTaylorAt to honor a
+//   nonempty phi.lqdBeta via the term B(1/z) = Σ_{l=1..N} β_l/z^l inside the
+//   exp argument, with N = polyPart.length = m_∞+1. The (★)_F equations
+//   match β against polyPart by applying Φ_φ^{-1} to w·h(w) (not h(w)):
+//
+//     w·h(w) = Σ_j Σ_s C_{j,s} (1/(w−a_j)^{s−1} + a_j/(w−a_j)^s)
+//            + Σ_{i=1..m_∞+1} C_{∞,i-1} w^i
+//
+//   The finite-pole part of w·h re-indexes to exactly the modified residues
+//   D_{j,s} = a_j·C_{j,s} + C_{j,s+1} already used by the (★)_A loop. The
+//   (s=1) terms (1/(w−a_j)^0 = constants) accumulate into the augmented
+//   polynomial-at-∞:  P̃ = [Σ_j C_{j,1}, C_∞,0, …, C_∞,m_∞].
+//
+//   Applying QD.Faber.inverseFaberAtInfinity(P̃, f̃, c) gives F̃ of length
+//   m_∞+2. The l = 0 output is the gauge-absorbed constant (handled by the
+//   r#(z) − r#(∞) normalization) and discarded. For l = 1, …, m_∞+1 we
+//   equate F̃_l − (Laurent of r# at ∞ in 1/z^l) = β_l, giving N complex
+//   equations matched 1-to-1 against the N free β's. System remains square.
 // =============================================================================
 
 (function () {
@@ -64,46 +76,75 @@
   }
 
   // ===========================================================================
-  // 1. Phi evaluation: φ(z) = c · z · exp(r#(z) − r#(∞))
+  // 1. Phi evaluation: φ(z) = c · z · exp(r#(z) − r#(∞) + B(1/z))
+  // ---------------------------------------------------------------------------
+  // The B(1/z) addition is the polynomial-h extension (HANDOFF #21–22).
+  // Without it (β empty) the parametrization is the "minimal" form
+  //   φ = c · z · exp(r#(z) − r#(∞)),
+  // matching only finite-pole h. With B(t) = Σ_{l=1..N} β_l t^l (no constant
+  // term — that would conflict with the c gauge), the Laurent expansion of φ
+  // at ∞ gains N additional free coefficients that are pinned to h's
+  // polynomial part via the (★)_F equations (computeTargetF_UQDL below).
+  // β lives on phi.lqdBeta as a Complex[] of length N (= polyPart.length).
+  // Empty / missing → no polynomial-h extension; this evaluator returns the
+  // legacy finite-pole-only φ exactly.
   // ===========================================================================
   function evalPhi_UQDL(z, phi) {
     const r = QD.LqdCommon.evalRHash(z, phi);
     const rInf = rHashAtInfinity(phi);
-    const rEff = Complex.sub(r, rInf);          // r#(z) − r#(∞)
+    const bPart = evalB_OverZ(phi, z);          // B(1/z), zero when lqdBeta empty
+    const rEff = Complex.add(Complex.sub(r, rInf), bPart);
     const ea = Math.exp(rEff.re);
     const expR = { re: ea * Math.cos(rEff.im), im: ea * Math.sin(rEff.im) };
     const cz = Complex.scale(z, phi.c);
     return Complex.mul(cz, expR);
   }
 
+  // B(1/z) = Σ_l β_l / z^l. Imported from LqdCommon (HANDOFF #27 dedupe).
+  const evalB_OverZ = QD.LqdCommon.evalB_OverZ;
+
   // ===========================================================================
   // 2. Taylor of φ at z = z_c
-  // ===========================================================================
-  // φ(z_c + t) = c (z_c + t) · exp(r#(z_c) − r#(∞)) · exp(r#(z_c+t) − r#(z_c))
-  //            = K · (z_c + t) · exp(rTilde(t))
-  // with K = c · exp(r#(z_c) − r#(∞)) and rTilde(t) = r#(z_c+t) − r#(z_c).
+  // ---------------------------------------------------------------------------
+  // φ(z_c + t) = c (z_c + t) · exp(r#(z_c) − r#(∞) + B(1/z_c))
+  //              · exp(r#(z_c+t) − r#(z_c) + B(1/(z_c+t)) − B(1/z_c))
+  //            = K · (z_c + t) · exp(rTilde(t) + bTilde(t))
+  // with K = c · exp(r#(z_c) − r#(∞) + B(1/z_c)),
+  //      rTilde(t) = r#(z_c+t) − r#(z_c),
+  //      bTilde(t) = B(1/(z_c+t)) − B(1/z_c).
+  // Both rTilde and bTilde have zero constant term, so Taylor.exp converges.
   function phiTaylorAt_UQDL(zc, phi, L) {
     const rT = QD.LqdCommon.rHashTaylorAt(zc, phi, L);   // Taylor of r# at z_c
     const rInf = rHashAtInfinity(phi);
+    const bT = bOverZTaylorAt(phi, zc, L);               // Taylor of B(1/z) at z_c
+    const b0 = bT[0];                                    // B(1/z_c)
     const r0minusInf = Complex.sub(rT[0], rInf);         // r#(z_c) − r#(∞)
+    const expArgConst = Complex.add(r0minusInf, b0);     // full constant in exp
 
-    const rTilde = rT.slice();
-    rTilde[0] = { re: 0, im: 0 };
-    const expRTilde = Taylor.exp(rTilde, L);
+    // Strip constants from both Taylors and sum the variable parts.
+    const argTilde = Taylor.zero(L + 1);
+    for (let l = 1; l <= L; l++) {
+      argTilde[l] = Complex.add(rT[l], bT[l]);
+    }
+    const expArgTilde = Taylor.exp(argTilde, L);
 
-    const ea = Math.exp(r0minusInf.re);
-    const expR0 = { re: ea * Math.cos(r0minusInf.im), im: ea * Math.sin(r0minusInf.im) };
-    const K = Complex.scale(expR0, phi.c);
+    const ea = Math.exp(expArgConst.re);
+    const expConst = { re: ea * Math.cos(expArgConst.im), im: ea * Math.sin(expArgConst.im) };
+    const K = Complex.scale(expConst, phi.c);
 
     const lin = Taylor.zero(L + 1);
     lin[0] = Complex.clone(zc);
     if (L >= 1) lin[1] = { re: 1, im: 0 };
 
-    const linTimesExp = Taylor.mul(lin, expRTilde, L);
+    const linTimesExp = Taylor.mul(lin, expArgTilde, L);
     const out = new Array(L + 1);
     for (let l = 0; l <= L; l++) out[l] = Complex.mul(K, linTimesExp[l]);
     return out;
   }
+
+  // Taylor expansion of B(1/z) at z = z_c. Imported from LqdCommon
+  // (HANDOFF #27 dedupe).
+  const bOverZTaylorAt = QD.LqdCommon.bOverZTaylorAt;
 
   // ===========================================================================
   // 3. r#(∞) — lifted to QD.LqdCommon.rHashAtInfinity (shared with unbounded
@@ -119,13 +160,59 @@
   }
 
   // ===========================================================================
-  // 5. Residual
+  // 4b. Polynomial-h target  (★)_F  for β
+  // ---------------------------------------------------------------------------
+  // Derivation in file header. Returns an array of length N = polyPart.length
+  // containing the target values for phi.lqdBeta[0], …, phi.lqdBeta[N-1].
+  // Returns [] when there is no polynomial part (so the (★)_F block in the
+  // residual is silently empty for finite-pole-only h).
   // ===========================================================================
-  // Layout (square system: 2n + 2M):
-  //   (●)   2n   φ(z_j) = a_j
-  //   (★)   2M   A_{j,k} = target via modified-residue Faber
+  function computeTargetF_UQDL(phi, hData) {
+    const polyPart = hData.polyPart || [];
+    const N = polyPart.length;
+    if (N === 0) return [];
+
+    // P̃ = [Σ_j C_{j,1},  C_∞,0,  C_∞,1,  …,  C_∞,m_∞]   length N+1.
+    let sumRe = 0, sumIm = 0;
+    for (const pole of hData.poles) {
+      if (pole.principal.length > 0) {
+        sumRe += pole.principal[0].re;
+        sumIm += pole.principal[0].im;
+      }
+    }
+    const Ptilde = new Array(N + 1);
+    Ptilde[0] = { re: sumRe, im: sumIm };
+    for (let i = 0; i < N; i++) Ptilde[i + 1] = Complex.clone(polyPart[i]);
+
+    // f̃ = Laurent of φ at ∞ in 1/z^l for l = 0..N-1  (length N).
+    const fTilde = QD.LqdCommon.phiLaurentAtInfinity_UQDL(phi, N);
+
+    // F̃ = inverseFaberAtInfinity(P̃, f̃, c)  (length N+1, indices 0..N).
+    const Ftilde = QD.Faber.inverseFaberAtInfinity(Ptilde, fTilde, phi.c);
+
+    // (★)_F target: β_l = F̃_l for l = 1, …, N. (The F̃_0 output is the
+    // gauge-absorbed constant of r at ∞, discarded.) Empirically — via a
+    // direct β-sweep at fixed (z_j, A) — this no-subtraction form is what
+    // makes the LQD boundary identity hold. The classical-QD−style
+    // subtraction of the r# Laurent (which would be the natural-looking
+    // formula) is not the correct one for the LQD kernel.
+    const targets = new Array(N);
+    for (let l = 1; l <= N; l++) {
+      targets[l - 1] = Complex.clone(Ftilde[l]);
+    }
+    return targets;
+  }
+
+  // ===========================================================================
+  // 5. Residual: 2n + 2M + 2N (square).
+  // ---------------------------------------------------------------------------
+  //   (●)    2n     φ(z_j) = a_j                  locator
+  //   (★)_A  2M     A_{j,k} = target_A             modified-residue Faber
+  //   (★)_F  2N     β_l    = target_F              poly-h-at-∞ Faber
   // The ∞-gauge r#(∞) = 0 is built into evalPhi / phiTaylorAt via the
-  // r#(z) − r#(∞) subtraction, so no explicit equation here.
+  // r#(z) − r#(∞) subtraction; no explicit equation here. The (★)_F block
+  // is empty (N = 0) when hData.polyPart is empty / absent, so finite-pole-
+  // only callers see the exact same system as before.
   function residual_UQDL(phi, hData, options) {
     options = options || {};
     const out = [];
@@ -142,6 +229,16 @@
         out.push(diff.re, diff.im);
       }
     }
+    // (★)_F polynomial-h block. Inert when phi.lqdBeta is empty.
+    if (phi.lqdBeta && phi.lqdBeta.length > 0) {
+      const targetF = computeTargetF_UQDL(phi, hData);
+      const N = phi.lqdBeta.length;
+      for (let l = 0; l < N; l++) {
+        const tl = (l < targetF.length) ? targetF[l] : { re: 0, im: 0 };
+        const diff = Complex.sub(phi.lqdBeta[l], tl);
+        out.push(diff.re, diff.im);
+      }
+    }
     return out;
   }
 
@@ -151,11 +248,14 @@
   // ===========================================================================
   // 6. Pack / unpack — schema-driven
   // ===========================================================================
-  // Same layout as bounded LQD non-singular: [{z_j}, {A_{j,k}}]. z_j ∈ 𝔻*
-  // so clamp to keep |z| ≥ 1.0001.
+  // Layout: {z_j} (n) + {A_{j,k}} (M) + {β_l} (N). z_j ∈ 𝔻*, clamped to
+  // |z| ≥ 1.0001. phi.lqdBeta length = template.lqdBeta.length = polyPart
+  // .length = N (= m_∞ + 1); zero-length when polyPart is empty/absent so
+  // the slot collapses cleanly for finite-pole-only h.
   const SCHEMA_UQDL = [
-    { kind: 'branchesZ', clamp: { side: 'out', cap: 1.0001 } },
+    { kind: 'branchesZ', clamp: { side: 'out', cap: QD.DISK_CLAMP_OUT } },
     { kind: 'branchesA' },
+    { kind: 'complexList', name: 'lqdBeta' },
   ];
   function packPhi_UQDL(phi)         { return QD.packPhiBySchema(phi, SCHEMA_UQDL); }
   function unpackPhi_UQDL(v, template) {
@@ -211,12 +311,24 @@
       return { z, A };
     });
 
-    return {
+    // Seed lqdBeta from polyPart by evaluating computeTargetF at this initial
+    // φ with β = [0, ..., 0]. In the trivial r# ≈ 0, β ≈ 0 limit this reduces
+    // to β_l ≈ c^l · conj(polyPart[l-1]); using the full target instead is
+    // marginally more accurate (the existing z_j ≠ 0 contributes via
+    // rHashLaurentAtInfinity) and reuses the same code path.
+    const polyPart = hData.polyPart || [];
+    const phiInit = {
       family: 'unboundedLQD',
       unbounded: true,
       c, w0: undefined,
       branches,
+      lqdBeta: polyPart.map(() => ({ re: 0, im: 0 })),
     };
+    if (polyPart.length > 0) {
+      const targetF = computeTargetF_UQDL(phiInit, hData);
+      phiInit.lqdBeta = targetF.map(c => ({ re: c.re, im: c.im }));
+    }
+    return phiInit;
   }
 
   function perturbedInitialGuess_UQDL(hData, norm, rng, r) {
@@ -227,12 +339,18 @@
   }
 
   function diverseInitialGuess_UQDL(hData, norm, rng, r) {
-    return {
+    const polyPart = hData.polyPart || [];
+    const base = {
       family: 'unboundedLQD',
       unbounded: true,
       c: norm.c, w0: undefined,
       branches: QD.LqdCommon.diverseSeedBranches(hData, rng, { zMin: 1.05, zMax: 30 }),
+      lqdBeta: polyPart.map(() => ({ re: 0, im: 0 })),
     };
+    if (polyPart.length > 0) {
+      base.lqdBeta = computeTargetF_UQDL(base, hData).map(c => ({ re: c.re, im: c.im }));
+    }
+    return base;
   }
 
   // ===========================================================================
@@ -408,7 +526,7 @@
     evalPhi: evalPhi_UQDL,
     phiTaylorAt: phiTaylorAt_UQDL,
     computeTargets(phi, hData) {
-      return { A: computeTargetA_UQDL(phi, hData), F: null };
+      return { A: computeTargetA_UQDL(phi, hData), F: computeTargetF_UQDL(phi, hData) };
     },
     residual: residual_UQDL,
     packPhi: packPhi_UQDL,

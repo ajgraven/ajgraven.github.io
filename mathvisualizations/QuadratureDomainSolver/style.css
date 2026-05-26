@@ -128,6 +128,108 @@ body {
   margin-bottom: 6px;
 }
 
+/* ===== QoL: help button, hover tooltip, copy button (HANDOFF #33) ===== */
+.help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  width: 16px; height: 16px;
+  padding: 0;
+  font-size: 11px; font-weight: 600;
+  line-height: 1;
+  color: #777;
+  background: #eef1f6;
+  border: 1px solid #c5c9d2;
+  border-radius: 50%;
+  cursor: help;
+  vertical-align: middle;
+}
+.help-btn:hover { color: #1a2a44; background: #dde3ee; border-color: #99a3b5; }
+.help-btn:focus { outline: 2px solid rgba(86, 119, 168, 0.4); outline-offset: 1px; }
+
+.help-popover {
+  position: absolute;
+  z-index: 1000;
+  max-width: 320px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #1a2a44;
+  background: #fffef7;
+  border: 1px solid #c5c9d2;
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}
+.help-popover h3 { margin: 0 0 4px 0; font-size: 12px; color: #5677a8; }
+.help-popover code, .help-popover kbd {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  background: #f3f5f9;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid #dde3ee;
+}
+.help-popover .hint { margin-top: 4px; }
+
+.hover-tooltip {
+  position: absolute;
+  z-index: 1100;
+  pointer-events: none;
+  max-width: 280px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  color: #1a2a44;
+  background: #fffef7;
+  border: 1px solid #c5c9d2;
+  border-radius: 5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+}
+.hover-tooltip .tt-class { display: block; font-family: inherit; color: #5677a8; font-weight: 600; margin-top: 2px; }
+.hover-tooltip .tt-row   { display: block; }
+
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  width: 18px; height: 18px;
+  padding: 0;
+  font-size: 12px;
+  color: #777;
+  background: #eef1f6;
+  border: 1px solid #c5c9d2;
+  border-radius: 3px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.copy-btn:hover { color: #1a2a44; background: #dde3ee; border-color: #99a3b5; }
+
+.copy-toast {
+  position: absolute;
+  z-index: 1200;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #fff;
+  background: rgba(40, 100, 60, 0.92);
+  border-radius: 4px;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+.copy-toast.fade { opacity: 0; }
+
+.shortcuts-overlay {
+  position: fixed;
+  z-index: 1300;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+}
+.shortcuts-table { font-size: 12px; border-spacing: 6px 4px; }
+.shortcuts-table td:first-child { text-align: right; }
+
 /* ===== Inputs ===== */
 input[type="text"], input[type="number"], select {
   font: inherit;
@@ -317,6 +419,39 @@ table.rm-params td.rm-value {
 }
 table.rm-params td.rm-name .katex { font-size: 1em; }
 
+/* ===== Riemann-sphere GL canvas ===== */
+/* Mirrors the #schwarz-gl-canvas pattern: absolute-positioned behind the
+   main 2D canvas (z-index 0). Hidden by default; sphere-ui.js shows it
+   when the sphere tab is active and hides it on tab-out. */
+#sphere-gl-canvas {
+  position: absolute;
+  left: 0; top: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Hover readout in the sphere camera card: allow newlines. */
+#sp-hover { white-space: pre; }
+
+/* Floating tooltip that follows the cursor over the Riemann-sphere GL canvas.
+   Sits at z-index 3 — above the GL canvas (2) and above any 2D overlay (1). */
+#sphere-hover-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid #d8dbe0;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  color: #333;
+  white-space: pre;
+  z-index: 3;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  user-select: none;
+}
+
 .hidden { display: none !important; }
 
 .search-spinner {
@@ -366,3 +501,33 @@ input.so-num {
   margin-bottom: 3px;
   font-weight: 500;
 }
+
+/* ---- View-mode segmented control (HANDOFF #29) ---------------------------
+   Used in the Schwarz tab sidebar to switch between plane and sphere views.
+   Pattern: two (or more) <button.seg-btn> children inside a .segmented
+   container; the JS toggles .active on the chosen one. */
+.segmented {
+  display: flex;
+  gap: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #c2cad6;
+}
+.segmented .seg-btn {
+  flex: 1;
+  padding: 6px 10px;
+  border: 0;
+  background: #f4f6fa;
+  color: #234;
+  cursor: pointer;
+  font: inherit;
+}
+.segmented .seg-btn:hover { background: #e8edf5; }
+.segmented .seg-btn.active {
+  background: #2d70c8;
+  color: #fff;
+}
+.segmented .seg-btn:not(:last-child) {
+  border-right: 1px solid #c2cad6;
+}
+/* .view-plane-only / .view-sphere-only — visibility toggled by JS. */

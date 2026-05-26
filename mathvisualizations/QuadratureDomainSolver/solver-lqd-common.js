@@ -114,6 +114,211 @@
   }
 
   // ===========================================================================
+  // Laurent of r#(z) at z = ∞ — same shape used by the unbounded LQD (★)_F
+  // and the φ-Laurent helpers below.
+  // ---------------------------------------------------------------------------
+  //   r#(z) = Σ_j Σ_k conj(A_{j,k}) · z^k / (1 − conj(z_j) z)^k
+  // Around z = ∞ (with u = 1/z) each term has a clean Möbius expansion:
+  //   z^k / (1 − conj(z_j) z)^k = (−conj(z_j))^{-k} · (1 − u/conj(z_j))^{-k}
+  //                             = (−1)^k · conj(z_j)^{-k} · Σ_l C(k+l−1, l) (u/conj(z_j))^l
+  // Summing in l for each (j, k) gives the coefficient `a_l` of `1/z^l`:
+  //   a_l = Σ_j Σ_k conj(A_{j,k}) · (−1)^k · C(k+l−1, l) / conj(z_j)^{k+l}.
+  // a_0 == rHashAtInfinity(phi) exactly (consistency check).
+  //
+  // Returns array of length L, indexed l = 0 .. L−1. Used by:
+  //   • phiLaurentAtInfinity_UQDL / _UQDLS   (build Laurent of φ at ∞)
+  //   • the (★)_F target loop in both unbounded-LQD residuals
+  // ===========================================================================
+  function rHashLaurentAtInfinity(phi, L) {
+    if (L <= 0) return [];
+    const out = new Array(L);
+    for (let l = 0; l < L; l++) out[l] = { re: 0, im: 0 };
+    for (const br of phi.branches) {
+      if (br.A.length === 0) continue;
+      const zjC = Complex.conj(br.z);
+      const zjCinv = Complex.inv(zjC);
+      for (let k = 1; k <= br.A.length; k++) {
+        const AkC = Complex.conj(br.A[k - 1]);
+        const sign = (k % 2 === 0) ? 1 : -1;
+        let zjCinvPow = Complex.pow(zjCinv, k);              // (1/conj(z_j))^k
+        let binom = 1;                                        // C(k+l−1, l) at l=0
+        for (let l = 0; l < L; l++) {
+          const contrib = Complex.scale(Complex.mul(AkC, zjCinvPow), sign * binom);
+          out[l] = Complex.add(out[l], contrib);
+          if (l + 1 < L) {
+            zjCinvPow = Complex.mul(zjCinvPow, zjCinv);
+            binom = binom * (k + l) / (l + 1);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  // ===========================================================================
+  // Laurent of the Blaschke factor b_{z_0}(z) at z = ∞ (UQDLS only)
+  // ---------------------------------------------------------------------------
+  // Returns Taylor of b_{z_0}(1/u) at u = 0 up to u^L, length L+1. Coefficients
+  // close-form by algebraic manipulation of the thesis form
+  //   b_{z_0}(1/u) = (1/|z_0|) · (1 − z_0 u) / (1 − u/conj(z_0)).
+  // Expansion via geometric series in u/conj(z_0):
+  //   [u^0] = 1/|z_0|
+  //   [u^n] = (1 − |z_0|²) / (|z_0| · conj(z_0)^n)     for n ≥ 1
+  // Requires |z_0| ≠ 0 and z_0 not on the unit circle (the singular LQD
+  // schema clamps z_0 ∈ 𝔻* via |z_0| ≥ 1.0001, satisfying both).
+  // ===========================================================================
+  function blaschkeLaurentAtInfinity(z0, L) {
+    if (L < 0) return [];
+    const absZ0 = Complex.abs(z0);
+    if (absZ0 < 1e-14) {
+      throw new Error("blaschkeLaurentAtInfinity: z_0 = 0 not supported");
+    }
+    const oneMinusAbsZ02 = 1 - absZ0 * absZ0;
+    const z0C = Complex.conj(z0);
+    const out = new Array(L + 1);
+    out[0] = { re: 1 / absZ0, im: 0 };
+    if (L >= 1) {
+      const z0Cinv = Complex.inv(z0C);
+      let z0CinvPow = Complex.clone(z0Cinv);                  // (1/conj(z_0))^1
+      const scale = oneMinusAbsZ02 / absZ0;
+      for (let n = 1; n <= L; n++) {
+        out[n] = Complex.scale(z0CinvPow, scale);
+        if (n < L) z0CinvPow = Complex.mul(z0CinvPow, z0Cinv);
+      }
+    }
+    return out;
+  }
+
+  // ===========================================================================
+  // Laurent of φ at z = ∞ for unbounded LQDs (non-singular).
+  // ---------------------------------------------------------------------------
+  // φ(z) = c · z · exp(r#(z) − r#(∞) + B(1/z)) = c · z · ε(z),
+  // where ε(z) = 1 + ε_1/z + ε_2/z² + … (Taylor in 1/z, ε_0 = 1).
+  // Then φ(z) = c·z + c·ε_1 + c·ε_2/z + … so the Laurent coefficient of 1/z^l
+  // is f̃_l = c · ε_{l+1}. We return [f̃_0, f̃_1, …, f̃_{L-1}], length L.
+  //
+  // ε(1/u) = exp(argument(u)) with argument(u) = Σ_{l≥1} (a_l + β_l) u^l,
+  // where a_l = rHashLaurentAtInfinity(phi)[l] and β_l = phi.lqdBeta[l-1]
+  // (zero past phi.lqdBeta.length). Compute via Taylor.exp.
+  // ===========================================================================
+  function phiLaurentAtInfinity_UQDL(phi, L) {
+    if (L <= 0) return [];
+    // a[l] for l = 0 .. L (need indices 1 .. L for the exp argument).
+    const a = rHashLaurentAtInfinity(phi, L + 1);
+    const beta = phi.lqdBeta || [];
+    const arg = Taylor.zero(L + 1);
+    for (let l = 1; l <= L; l++) {
+      const bl = (l - 1 < beta.length) ? beta[l - 1] : { re: 0, im: 0 };
+      arg[l] = Complex.add(a[l], bl);
+    }
+    const eps = Taylor.exp(arg, L);            // [ε_0=1, ε_1, …, ε_L]
+    const f = new Array(L);
+    for (let l = 0; l < L; l++) {
+      f[l] = Complex.scale(eps[l + 1], phi.c);
+    }
+    return f;
+  }
+
+  // ===========================================================================
+  // Laurent of φ at z = ∞ for unbounded SINGULAR LQDs.
+  // ---------------------------------------------------------------------------
+  // φ(z) = c·|z_0|·z·b_{z_0}(z)·ε(z). In u = 1/z:
+  //   φ(1/u) = (c·|z_0|/u) · b_{z_0}(1/u) · ε(1/u)
+  // and φ(z) = c·z + Σ_{l≥0} f̃_l/z^l ⇔ φ(1/u) = c/u + Σ f̃_l u^l.
+  // Equate (1/u)·c·|z_0|·b_{z_0}(1/u)·ε(1/u) = c/u + Σ f̃_l u^l:
+  //   b_{z_0}(1/u)·ε(1/u) = 1/|z_0| + (1/(c·|z_0|)) Σ_{l≥0} f̃_l u^{l+1}
+  // ⇒ f̃_l = c·|z_0| · [u^{l+1}] (b_{z_0}(1/u) · ε(1/u))  for l = 0, …, L−1.
+  // ===========================================================================
+  // γ-handling note (HANDOFF #24): callers needing γ-aware Laurent at ∞
+  // must merge γ into phi.branches first (via _phiWithSyntheticBranch in
+  // solver-uqd-lqd-singular.js); rHashLaurentAtInfinity then picks up the
+  // synthetic branch contribution automatically. This helper itself stays
+  // β-only and family-generic.
+  function phiLaurentAtInfinity_UQDLS(phi, L) {
+    if (L <= 0) return [];
+    const absZ0 = Complex.abs(phi.z0);
+    if (absZ0 < 1e-14) {
+      throw new Error("phiLaurentAtInfinity_UQDLS: z_0 = 0 not supported");
+    }
+    // Both Taylors in u to order L.
+    const bU = blaschkeLaurentAtInfinity(phi.z0, L);          // length L+1
+    const a = rHashLaurentAtInfinity(phi, L + 1);             // length L+1
+    const beta = phi.lqdBeta || [];
+    const arg = Taylor.zero(L + 1);
+    for (let l = 1; l <= L; l++) {
+      const bl = (l - 1 < beta.length) ? beta[l - 1] : { re: 0, im: 0 };
+      arg[l] = Complex.add(a[l], bl);
+    }
+    const eps = Taylor.exp(arg, L);            // length L+1
+    const prod = Taylor.mul(bU, eps, L);       // length L+1, want indices 1..L
+    const f = new Array(L);
+    const scale = phi.c * absZ0;
+    for (let l = 0; l < L; l++) {
+      f[l] = Complex.scale(prod[l + 1], scale);
+    }
+    return f;
+  }
+
+  // ===========================================================================
+  // Polynomial-h β-extension helpers (UQDL / UQDLS, HANDOFF #22).
+  // ---------------------------------------------------------------------------
+  // Both unbounded LQD families add a polynomial-h term B(1/z) = Σ_l β_l/z^l
+  // inside the exp argument of φ. The same Laurent-in-(1/z) machinery is
+  // shared here so callers (solver-uqd-lqd.js, solver-uqd-lqd-singular.js,
+  // and the Schwarz adapters) don't need to redefine it.
+  // ===========================================================================
+  //
+  // B(1/z) = Σ_l beta[l-1] / z^l  (or, equivalently, Σ_l coeffs[l] / z^{l+1}
+  //   with zero-indexed coeffs). Returns 0+0i when the coefficient list is empty.
+  function laurentOverZ(coeffs, z) {
+    if (!coeffs.length) return { re: 0, im: 0 };
+    const zInv = Complex.inv(z);
+    let pow = Complex.clone(zInv);                // (1/z)^1
+    let acc = { re: 0, im: 0 };
+    for (let l = 0; l < coeffs.length; l++) {
+      acc = Complex.add(acc, Complex.mul(coeffs[l], pow));
+      if (l + 1 < coeffs.length) pow = Complex.mul(pow, zInv);
+    }
+    return acc;
+  }
+
+  // Taylor expansion of Σ_l coeffs[l] / z^{l+1} at z = z_c, up to t^L.
+  //   1/(z_c + t) = (1/z_c) · 1/(1 + t/z_c) = Σ_n (-1)^n · t^n / z_c^{n+1}
+  // and (1/(z_c+t))^l is the l-th power of that. Returns Taylor[L+1] of zeros
+  // when coeffs is empty.
+  function laurentOverZTaylorAt(coeffs, zc, L) {
+    const out = Taylor.zero(L + 1);
+    if (!coeffs.length) return out;
+    const zcInv = Complex.inv(zc);
+    const oneOver = Taylor.zero(L + 1);           // Taylor of 1/(z_c + t)
+    let sign = 1;
+    let zcInvPow = Complex.clone(zcInv);
+    for (let n = 0; n <= L; n++) {
+      oneOver[n] = Complex.scale(zcInvPow, sign);
+      sign = -sign;
+      if (n + 1 <= L) zcInvPow = Complex.mul(zcInvPow, zcInv);
+    }
+    let pow = oneOver.slice();                    // (1/z)^1
+    for (let l = 0; l < coeffs.length; l++) {
+      const cl = coeffs[l];
+      for (let n = 0; n <= L; n++) {
+        out[n] = Complex.add(out[n], Complex.mul(cl, pow[n]));
+      }
+      if (l + 1 < coeffs.length) pow = Taylor.mul(pow, oneOver, L);
+    }
+    return out;
+  }
+
+  // β-flavored convenience wrappers that read phi.lqdBeta directly. Use these
+  // from the UQDL/UQDLS solvers instead of redefining locally.
+  function evalB_OverZ(phi, z) {
+    return laurentOverZ(phi.lqdBeta || [], z);
+  }
+  function bOverZTaylorAt(phi, zc, L) {
+    return laurentOverZTaylorAt(phi.lqdBeta || [], zc, L);
+  }
+
+  // ===========================================================================
   // Modified residues — D_{j,s} = a_j · C_{j,s} + C_{j,s+1}
   // (with C_{j, m_j+1} ≡ 0). The bounded-QD inverse Faber formula carries
   // through unchanged for LQDs with C → D (Theorem 5.4.2).
@@ -361,7 +566,15 @@
   QD.LqdCommon = {
     blaschkeEval,
     blaschkeTaylor,
+    blaschkeLaurentAtInfinity,
     rHashAtInfinity,
+    rHashLaurentAtInfinity,
+    phiLaurentAtInfinity_UQDL,
+    phiLaurentAtInfinity_UQDLS,
+    laurentOverZ,
+    laurentOverZTaylorAt,
+    evalB_OverZ,
+    bOverZTaylorAt,
     modifiedResidues,
     evalRHash,
     rHashTaylorAt,
