@@ -27,31 +27,33 @@
 (function (global) {
   'use strict';
 
-  // Same script set as index.html, in load order. Paths are relative to the
-  // HTML document (== relative to /app/) so we can resolve them at runtime.
-  const SOLVER_SRC_FILES = [
-    'complex.js',
-    'taylor.js',
-    'solver.js',
-    'solver-faber.js',
-    'solver-qd.js',
-    'solver-uqd.js',
-    'solver-lqd-common.js',
-    'solver-lqd.js',
-    'solver-lqd-singular.js',
-    'solver-uqd-lqd.js',
-    'solver-uqd-lqd-singular.js',
-    'parse-h.js',
-    'param-slice/param-slice-common.js',
-  ];
+  // Worker bundle source list is the shared WORKER_BUNDLE_FILES from
+  // asset-manifest.js (P3.3 / A7) plus this tab's own kernel. No inline
+  // fallback — a stale copy silently drops newer solver families from the
+  // bundle (it omitted all 5 PQD files for months). Fail loud instead;
+  // index.html loads asset-manifest.js before this file.
+  const _CORE = global.QD_ASSET_MANIFEST && global.QD_ASSET_MANIFEST.WORKER_BUNDLE_FILES;
+  if (!_CORE) {
+    throw new Error(
+      'param-slice-pool.js: QD_ASSET_MANIFEST.WORKER_BUNDLE_FILES unavailable — ' +
+      'asset-manifest.js must load before this file.');
+  }
+  const SOLVER_SRC_FILES = [..._CORE, 'param-slice/param-slice-common.js'];
 
   // The worker-side message handler. Self-contained string so we can append
   // it after the bundled solver source.  Uses QD.* / ParamSlice globals
   // exposed by the bundled scripts on `self`.
   //
   // Message protocol (kind: 'tile'):
-  //   { jobId, scenario, sweepPoints, warmHints? }
-  // - scenario     : { hData, norm, opts, expectedFamilyTag }
+  //   { jobId, scenarioId, scenario?, sweepPoints, warmHints? }
+  // - scenarioId   : monotonically increasing id of the base scenario. The
+  //                  worker caches the last scenario it was sent; the pool
+  //                  omits `scenario` when this worker already holds that id
+  //                  (A5 — avoids re-cloning/re-sending the whole scenario on
+  //                  every tile, which for an N-row sweep was N redundant
+  //                  structured-clones of hData/norm/opts).
+  // - scenario     : { hData, norm, opts, expectedFamilyTag } — present only
+  //                  the first time a given scenarioId reaches this worker.
   // - sweepPoints  : [[{ref,value}, ...], ...]   one entry per pixel
   // - warmHints    : optional array of φ objects (one per pixel) — when
   //                  provided, overrides the implicit per-chunk warm chain.
@@ -63,7 +65,15 @@
   self.onmessage = function (e) {
     const msg = e.data;
     if (!msg || msg.kind !== 'tile') return;
-    const { jobId, scenario, sweepPoints, warmHints } = msg;
+    const { jobId, sweepPoints, warmHints } = msg;
+    // Refresh the cached scenario when the pool sends a new one; otherwise
+    // reuse the last one this worker received (A5).
+    if (msg.scenario) self._psScenario = msg.scenario;
+    const scenario = self._psScenario;
+    if (!scenario) {
+      self.postMessage({ kind: 'tile', jobId, error: 'param-slice worker: no scenario cached for scenarioId ' + msg.scenarioId });
+      return;
+    }
     const expectedFamilyTag = scenario.expectedFamilyTag || undefined;
     const results = new Array(sweepPoints.length);
     // One scratch scenario per tile message — mutated in place between
@@ -100,8 +110,12 @@
       // attach to the worker's global object, and lets the family files find
       // `window.QD` set by the preceding `solver.js`.
       parts.push('var window = self;\n');
+      // Cache-bust each source fetch with the release version so a Worker can
+      // never run stale solver source from the browser HTTP cache after a
+      // deploy (see asset-manifest.js CACHE_VERSION).
+      const _ver = (global.QD_ASSET_MANIFEST && global.QD_ASSET_MANIFEST.CACHE_VERSION) || '0';
       for (const f of SOLVER_SRC_FILES) {
-        const resp = await fetch(f);
+        const resp = await fetch(f + '?v=' + encodeURIComponent(_ver));
         if (!resp.ok) throw new Error('param-slice-pool: failed to fetch ' + f + ' (' + resp.status + ')');
         parts.push('/*===== ' + f + ' =====*/\n');
         parts.push(await resp.text());
@@ -126,8 +140,13 @@
       this.pending = [];                   // tile jobs awaiting a worker
       this.activeJobs = new Map();         // jobId → { worker, resolve }
       this._nextJobId = 1;
+      this._scenarioSeq = 0;               // assigns scenarioIds (A5)
       this._cancelled = false;
     }
+
+    // Allocate a stable id for a base scenario so workers can cache it across
+    // tiles instead of receiving a fresh clone every tile (A5).
+    nextScenarioId() { return ++this._scenarioSeq; }
 
     _dispatch() {
       while (this.idle.length > 0 && this.pending.length > 0 && !this._cancelled) {
@@ -141,23 +160,29 @@
           worker.removeEventListener('message', onMessage);
           this.activeJobs.delete(jobId);
           this.idle.push(worker);
+          if (m.error) console.error('[param-slice worker] tile error:', m.error);
           job.resolve(m.results);
           this._dispatch();
         };
         worker.addEventListener('message', onMessage);
+        // Send the full scenario only when this worker hasn't yet cached this
+        // scenarioId; otherwise the worker reuses its cached copy (A5).
+        const sendScenario = worker._loadedScenarioId !== job.scenarioId;
+        if (sendScenario) worker._loadedScenarioId = job.scenarioId;
         worker.postMessage({
           kind: 'tile',
           jobId,
-          scenario: job.scenario,
+          scenarioId: job.scenarioId,
+          scenario: sendScenario ? job.scenario : undefined,
           sweepPoints: job.sweepPoints,
           warmHints: job.warmHints || null,
         });
       }
     }
 
-    submitTile(scenario, sweepPoints, warmHints) {
+    submitTile(scenario, scenarioId, sweepPoints, warmHints) {
       return new Promise((resolve) => {
-        this.pending.push({ scenario, sweepPoints, warmHints, resolve });
+        this.pending.push({ scenario, scenarioId, sweepPoints, warmHints, resolve });
         this._dispatch();
       });
     }
@@ -171,6 +196,7 @@
     async solveBatch(scenario, mode, points, warmHints) {
       if (!points || points.length === 0) return [];
       const scenarioWithTag = _attachFamilyTag(scenario, mode);
+      const scenarioId = this.nextScenarioId();      // shared across this batch's chunks (A5)
       const nChunks = Math.min(this.workers.length, points.length);
       const out = new Array(points.length);
       const chunkSize = Math.ceil(points.length / nChunks);
@@ -181,7 +207,7 @@
         if (start >= end) break;
         const chunkPoints = points.slice(start, end);
         const chunkHints  = warmHints ? warmHints.slice(start, end) : null;
-        const p = this.submitTile(scenarioWithTag, chunkPoints, chunkHints).then((results) => {
+        const p = this.submitTile(scenarioWithTag, scenarioId, chunkPoints, chunkHints).then((results) => {
           if (!results) return;
           for (let i = 0; i < results.length; i++) out[start + i] = results[i];
         });
@@ -218,6 +244,7 @@
       const xs = sampleAxis(axes[0]);
       const ys = has2 ? sampleAxis(axes[1]) : [null];
       const scenarioWithTag = _attachFamilyTag(scenario, mode);
+      const scenarioId = this.nextScenarioId();      // one id for the whole sweep (A5)
 
       const t0 = performance.now();
       let tilesDone = 0;
@@ -230,7 +257,7 @@
           if (has2) pt.push({ ref: axes[1].ref, value: yVal });
           sweepPoints[col] = pt;
         }
-        const p = this.submitTile(scenarioWithTag, sweepPoints, null).then((results) => {
+        const p = this.submitTile(scenarioWithTag, scenarioId, sweepPoints, null).then((results) => {
           if (results == null) return;
           tilesDone++;
           if (onTile) {

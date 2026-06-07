@@ -26,7 +26,11 @@
   if (!QD || !QD.Complex) {
     // Loaded before solver — tolerate this; consumers re-resolve QD lazily.
   }
-  const C = (QD && QD.Complex) || null;
+
+  // Per-pixel cap on the boundary SELF-INTERSECTION sample count (decoupled
+  // from the identity-check N). A coarse parameter-slice map detects boundary
+  // crossings reliably at this resolution; higher counts only slow the sweep.
+  const UNIVALENCE_SAMPLES_CAP = 64;
 
   // ---------------------------------------------------------------------------
   // Parameter descriptors
@@ -42,19 +46,28 @@
   //   { kind: 'w0Re' } | { kind: 'w0Im' }
   // ---------------------------------------------------------------------------
 
-  // Modes (mirror MODES in ui.js)
+  // Modes (mirror MODES in ui.js). The family tag drives per-pixel solver
+  // dispatch + warm-start gating (only same-family phis warm-start each other),
+  // so every solvable mode MUST appear here — incl. the four PQD families.
   const MODE_FAMILY_TAG = {
     'bounded':                undefined,
     'unbounded':              undefined,
+    'pqd-bounded':            'powerQD',
+    'pqd-bounded-singular':   'powerQD_singular',
+    'pqd-unbounded':          'unboundedPQD',
+    'pqd-unbounded-singular': 'unboundedPQD_singular',
     'lqd-bounded':            'boundedLQD',
     'lqd-bounded-singular':   'boundedLQD_singular',
     'lqd-unbounded':          'unboundedLQD',
     'lqd-unbounded-singular': 'unboundedLQD_singular',
   };
-  function modeHasC(mode)        { return mode === 'unbounded' || mode === 'lqd-unbounded' || mode === 'lqd-unbounded-singular'; }
+  // c (conformal radius) is an input for every UNBOUNDED family (classical, PQD, LQD).
+  function modeHasC(mode)        { return mode === 'unbounded' || mode === 'pqd-unbounded' || mode === 'pqd-unbounded-singular' || mode === 'lqd-unbounded' || mode === 'lqd-unbounded-singular'; }
   function modeHasQ(mode)        { return mode === 'lqd-bounded-singular' || mode === 'lqd-unbounded-singular'; }
-  function modeHasW0Manual(mode) { return mode === 'bounded' || mode === 'lqd-bounded' || mode === 'lqd-bounded-singular'; }
-  function modeAllowsPoly(mode)  { return mode === 'unbounded' || mode === 'lqd-unbounded' || mode === 'lqd-unbounded-singular'; }
+  // w₀ is an input for the BOUNDED families (classical, PQD, LQD; centroid-default but sweepable).
+  function modeHasW0Manual(mode) { return mode === 'bounded' || mode === 'pqd-bounded' || mode === 'pqd-bounded-singular' || mode === 'lqd-bounded' || mode === 'lqd-bounded-singular'; }
+  // Polynomial-h (pole at ∞) is allowed for every UNBOUNDED family.
+  function modeAllowsPoly(mode)  { return mode === 'unbounded' || mode === 'pqd-unbounded' || mode === 'pqd-unbounded-singular' || mode === 'lqd-unbounded' || mode === 'lqd-unbounded-singular'; }
 
   // Subscript helper
   const SUBS = ['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉'];
@@ -234,15 +247,33 @@
     [CLASS_UNCLASSIFIED]:    'Unclassified',
   };
 
+  // Deduped warn-log for CAPABILITY classifications — see HANDOFF #36.
+  // The CAPABILITY bucket gates on intentional "not yet implemented" /
+  // "deferred to" phrasing; if anything else hits it we want visibility,
+  // so the first occurrence of each unique error string goes to the
+  // browser console.
+  const _capabilityErrorsLogged = new Set();
+  function _logCapabilityErrorOnce(err) {
+    if (_capabilityErrorsLogged.has(err)) return;
+    _capabilityErrorsLogged.add(err);
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[param-slice classifier] CAPABILITY-bucket error: ' + err);
+    }
+  }
+
   function classifyResult(result) {
     if (!result) return { cls: CLASS_UNCLASSIFIED, iterations: 0 };
     if (!result.success) {
       const err = (result.error || '').toString();
-      if (/no algebraic root/i.test(err)) return { cls: CLASS_NO_ROOT, iterations: 0, err };
-      // Capability-refused: only genuine "not yet implemented" / "deferred"
-      // gates qualify, not every normalizeOpts throw (which prefixes
-      // "solveInverseQD: " indiscriminately for any input-shape error).
-      if (/not yet implemented|deferred|higher-order pole/i.test(err)) {
+      if (/no algebraic/i.test(err)) return { cls: CLASS_NO_ROOT, iterations: 0, err };
+      // Capability-refused: only matches errors deliberately worded as
+      // "not yet implemented" or "deferred to" (e.g. "deferred to a
+      // later pass"). Tightened in HANDOFF #36 — previously the regex
+      // also matched the bare word "deferred" and "higher-order pole",
+      // causing math-rejection throws to mis-classify as feature gates.
+      // Future solver feature gates should follow this phrasing.
+      if (/\bnot yet implemented\b|\bdeferred to\b/i.test(err)) {
+        _logCapabilityErrorOnce(err);
         return { cls: CLASS_CAPABILITY, iterations: 0, err };
       }
       if (/iter|line search|jacobian|singular/i.test(err)) {
@@ -325,12 +356,20 @@
   // solver call + classification.
   function _solveScenarioBody(QD, s, warmHint, expectedFamilyTag) {
     const opts = Object.assign({}, s.opts || {});
-    if (s.norm.w0)        opts.w0 = s.norm.w0;
-    if (s.norm.c != null) opts.c  = s.norm.c;
-    if (s.norm.q)         opts.q  = s.norm.q;
-    if (s.norm.lqd)       opts.lqd = true;
-    if (s.norm.unbounded) opts.unbounded = true;
-    if (s.norm.singular)  opts.singular = true;
+    if (s.norm.w0)            opts.w0 = s.norm.w0;
+    if (s.norm.c != null)     opts.c  = s.norm.c;
+    if (s.norm.q)             opts.q  = s.norm.q;
+    if (s.norm.lqd)           opts.lqd = true;
+    if (s.norm.unbounded)     opts.unbounded = true;
+    if (s.norm.singular)      opts.singular = true;
+    // PQD power weight |w|^{2(α−1)}. WITHOUT this, the cold-solve
+    // `solveInverseQD` below sees no `alpha`, so `selectFamily` can't match
+    // Family.powerQD / powerQD_singular and silently falls back to the
+    // classical boundedQD — every PQD pixel (grid AND the Hovered-QD live
+    // preview) then renders a classical domain. The first cold pixel also
+    // poisons the warm-start chain (its phi.family ≠ the PQD tag, so no
+    // subsequent pixel can warm-start). Mirrors `applyNorm` in ui.js's MODES.
+    if (s.norm.alpha != null) opts.alpha = s.norm.alpha;
 
     const canWarm = warmHint &&
       warmHint.family === expectedFamilyTag &&
@@ -345,6 +384,10 @@
         if (init.w0 && s.norm.w0) { init.w0.re = s.norm.w0.re; init.w0.im = s.norm.w0.im; }
         if (s.norm.c != null)     init.c = s.norm.c;
         if (init.q && s.norm.q)   { init.q.re = s.norm.q.re; init.q.im = s.norm.q.im; }
+        // α is fixed across a sweep (never a sweepable axis), so the warm
+        // hint already carries the right value — but keep it in lock-step
+        // with the scenario for robustness (mirrors the w0/c/q sync above).
+        if (s.norm.alpha != null) init.alpha = s.norm.alpha;
         // Speculative tighter maxIter when the warm hint carries a
         // coarse-pass iteration count (`_coarseIter`, set by the
         // adaptive renderer's nearestPhi). A refined sub-pixel whose
@@ -369,7 +412,16 @@
         if (ns.success) {
           const family = QD.selectFamily(s.norm);
           const phi = family.canonicalizePhi(ns.phi);
-          const univalent = QD.isBoundaryUnivalent(phi, opts.univalenceSamples || 64);
+          // Decouple the per-pixel univalence sample count from the identity
+          // count. The identity check needs the full quality-preset N for its
+          // `identityTol` accuracy, but the boundary SELF-INTERSECTION check is
+          // a topological test that a coarse cartography map resolves fine at
+          // ≤ UNIVALENCE_SAMPLES_CAP — capping it avoids paying 128–512 boundary
+          // samples per pixel just to detect a crossing (see the param-slice
+          // PQD perf work). The cold path (rare, see the coarse-pass seed) keeps
+          // both at full N inside solveInverseQD.
+          const uniN = Math.min(opts.univalenceSamples || 64, UNIVALENCE_SAMPLES_CAP);
+          const univalent = QD.isBoundaryUnivalent(phi, uniN);
           const id = family.verifyQuadratureIdentity(phi, s.hData,
             { numSamples: opts.univalenceSamples || 64 });
           resultBag = {
@@ -379,10 +431,16 @@
             warmUsed: true,
           };
         } else {
-          resultBag = _wrapFullSolve(QD.solveInverseQD(s.hData, opts));
+          // bootstrapW0:false — never run the powerQD classical-QD w₀ bootstrap
+        // (a nested full solve) per sweep pixel. Sweeps supply/accept the
+        // scenario w₀; the centroid fallback is used if w₀ is absent.
+        resultBag = _wrapFullSolve(QD.solveInverseQD(s.hData, Object.assign({ bootstrapW0: false }, opts)));
         }
       } else {
-        resultBag = _wrapFullSolve(QD.solveInverseQD(s.hData, opts));
+        // bootstrapW0:false — never run the powerQD classical-QD w₀ bootstrap
+        // (a nested full solve) per sweep pixel. Sweeps supply/accept the
+        // scenario w₀; the centroid fallback is used if w₀ is absent.
+        resultBag = _wrapFullSolve(QD.solveInverseQD(s.hData, Object.assign({ bootstrapW0: false }, opts)));
       }
     } catch (err) {
       resultBag = { success: false, error: String(err && err.message || err) };

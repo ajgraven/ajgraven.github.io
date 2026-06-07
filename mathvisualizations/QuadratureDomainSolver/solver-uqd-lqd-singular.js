@@ -99,8 +99,8 @@
   const rHashTaylorAt       = QD.LqdCommon.rHashTaylorAt;
   const rHashAtInfinity     = QD.LqdCommon.rHashAtInfinity;
   const computeFaberTargetA = QD.LqdCommon.computeFaberTargetA;
-  const perturbBranchesInPlace = QD.LqdCommon.perturbBranchesInPlace;
-  const diverseSeedBranches    = QD.LqdCommon.diverseSeedBranches;
+  // (perturbBranchesInPlace / diverseSeedBranches now live in
+  // seeds-uqd-lqd-singular.js, which uses QD.LqdCommon.* directly — B3.)
   const sampleBoundaryWithDerivative = QD.LqdCommon.sampleBoundaryWithDerivative;
   const verifyIdentityGeneric  = QD.LqdCommon.verifyIdentityGeneric;
   const residueScaleFloor      = QD.LqdCommon.residueScaleFloor;
@@ -518,131 +518,16 @@
       : [];
   }
 
-  function initialGuess_UQDLS(hData, norm) {
-    const c = norm.c;
-    const q = norm.q;
-
-    // Branches correspond 1-to-1 with FINITE poles only.
-    const finiteHData = _finitePolesView(hData);
-    const finitePoles = finiteHData.poles;
-
-    let zj_guess = null, A_guess = null, z0_guess = null;
-
-    // Try companion bootstrap (only if at least one finite pole).
-    if (finitePoles.length > 0) {
-      try {
-        const companion = QD.solveInverseQD(finiteHData, {
-          lqd: true, unbounded: true, c,
-          identityTol: 1e-3, autoEscalate: false, findAlternates: false,
-        });
-        if (companion.success && companion.primary && companion.primary.phi) {
-          const phiUQDL = companion.primary.phi;
-          zj_guess = phiUQDL.branches.map(br => Complex.clone(br.z));
-          A_guess  = phiUQDL.branches.map(br => br.A.map(Complex.clone));
-
-          // z₀ = argmin |φ_UQDL(z)| on |z| = 1.01, pushed slightly outward.
-          const ring = 1.01;
-          let bestZ = null, bestMag = Infinity;
-          for (let i = 0; i < 60; i++) {
-            const theta = 2 * Math.PI * i / 60;
-            const z = { re: ring * Math.cos(theta), im: ring * Math.sin(theta) };
-            const mag = Complex.abs(QD.Family.unboundedLQD.evalPhi(z, phiUQDL));
-            if (mag < bestMag) { bestMag = mag; bestZ = z; }
-          }
-          if (bestZ) z0_guess = Complex.scale(bestZ, 1.05);
-        }
-      } catch (e) { /* fall through to geometric */ }
-    }
-
-    // Geometric fallback (also used when no finite poles).
-    if (!zj_guess) {
-      zj_guess = finitePoles.map(p => {
-        let z = Complex.scale(p.a, 1 / c);
-        const r = Complex.abs(z);
-        if (r < 1.05) z = Complex.scale(z, 1.05 / Math.max(r, 1e-15));
-        return z;
-      });
-      A_guess = finitePoles.map(p => {
-        const D = [];
-        for (let s = 0; s < p.principal.length; s++) {
-          const aC = Complex.mul(p.a, p.principal[s]);
-          const next = (s + 1 < p.principal.length) ? p.principal[s + 1] : { re: 0, im: 0 };
-          D.push(Complex.add(aC, next));
-        }
-        let ck = 1;
-        const A = [];
-        for (let k = 1; k <= p.principal.length; k++) {
-          ck *= c;
-          A.push(Complex.scale(D[k - 1], 1 / ck));
-        }
-        return A;
-      });
-    }
-    if (!z0_guess) z0_guess = { re: 2, im: 0 };
-
-    // Seed lqdBeta from polyPart and lqdGamma from a=0 principal.
-    const polyPart = hData.polyPart || [];
-    const phiInit = {
-      family: 'unboundedLQD_singular',
-      unbounded: true,
-      c, q: Complex.clone(q),
-      z0: z0_guess,
-      w0: undefined,
-      branches: zj_guess.map((z, j) => ({ z, A: A_guess[j].map(Complex.clone) })),
-      lqdBeta:  polyPart.map(() => ({ re: 0, im: 0 })),
-      lqdGamma: _seedLqdGamma(hData),
-    };
-    if (polyPart.length > 0) {
-      const targetF = computeTargetF_UQDLS(phiInit, hData);
-      phiInit.lqdBeta = targetF.map(c => ({ re: c.re, im: c.im }));
-    }
-    return phiInit;
+  // Seed strategy extracted to solvers/seeds/seeds-uqd-lqd-singular.js (B3).
+  // Aliased locally so the continuation loop + Family entry keep their names.
+  // The seeds there call QD._finitePolesView_UQDLS / QD._seedLqdGamma_UQDLS /
+  // QD.computeTargetF_UQDLS (exported below).
+  if (!QD.Seeds || !QD.Seeds.unboundedLQD_singular) {
+    throw new Error("solver-uqd-lqd-singular.js: QD.Seeds.unboundedLQD_singular missing — seeds-uqd-lqd-singular.js must be loaded first");
   }
-
-  function perturbedInitialGuess_UQDLS(hData, norm, rng, r) {
-    const base = initialGuess_UQDLS(hData, norm);
-    perturbBranchesInPlace(base.branches, rng, r || 0,
-      { side: 'out', zCap: 1.05, zScale: 1.10 });
-    // Perturb z₀ too, with the same out-side clamp + upper bound.
-    const sigma = 0.15 + 0.25 * (r || 0);
-    base.z0 = {
-      re: base.z0.re + sigma * (rng() - 0.5),
-      im: base.z0.im + sigma * (rng() - 0.5),
-    };
-    const rz0 = Math.hypot(base.z0.re, base.z0.im);
-    if (rz0 < 1.05)    { const s = 1.05 / Math.max(rz0, 1e-15); base.z0.re *= s; base.z0.im *= s; }
-    else if (rz0 > 50) { const s = 50   / rz0;                  base.z0.re *= s; base.z0.im *= s; }
-    // Perturb lqdGamma multiplicatively (real-axis) + additively (im).
-    for (let l = 0; l < base.lqdGamma.length; l++) {
-      base.lqdGamma[l] = {
-        re: base.lqdGamma[l].re * (1 + sigma * (rng() - 0.5)),
-        im: base.lqdGamma[l].im + sigma * (rng() - 0.5),
-      };
-    }
-    return base;
-  }
-
-  function diverseInitialGuess_UQDLS(hData, norm, rng, r) {
-    const c = norm.c, q = norm.q;
-    const mz0 = Math.exp(Math.log(1.05) + rng() * Math.log(30 / 1.05));
-    const pz0 = 2 * Math.PI * rng();
-    const polyPart = hData.polyPart || [];
-    const finiteHData = _finitePolesView(hData);
-    const base = {
-      family: 'unboundedLQD_singular',
-      unbounded: true,
-      c, q: Complex.clone(q),
-      z0: { re: mz0 * Math.cos(pz0), im: mz0 * Math.sin(pz0) },
-      w0: undefined,
-      branches: diverseSeedBranches(finiteHData, rng, { zMin: 1.05, zMax: 30 }),
-      lqdBeta:  polyPart.map(() => ({ re: 0, im: 0 })),
-      lqdGamma: _seedLqdGamma(hData),
-    };
-    if (polyPart.length > 0) {
-      base.lqdBeta = computeTargetF_UQDLS(base, hData).map(c => ({ re: c.re, im: c.im }));
-    }
-    return base;
-  }
+  const initialGuess_UQDLS          = QD.Seeds.unboundedLQD_singular.initialGuess;
+  const perturbedInitialGuess_UQDLS = QD.Seeds.unboundedLQD_singular.perturbedInitialGuess;
+  const diverseInitialGuess_UQDLS   = QD.Seeds.unboundedLQD_singular.diverseInitialGuess;
 
   // ===========================================================================
   // 6. Continuation in c
@@ -958,11 +843,16 @@
       // h = q/w only (no finite poles, no polyPart, no a=0 γ-entry) has
       // no solution (Theorem 5.5.2-style). Otherwise the polyPart / finite
       // poles / γ provide the structure that pins φ.
+      // Wording note (HANDOFF #36): phrased as "no algebraic QD exists"
+      // so the param-slice classifier routes this to NO_ROOT (gray) via
+      // the /no algebraic/i bucket rather than the (now-tightened)
+      // CAPABILITY bucket. The throw is a *math* rejection, not a
+      // feature gate.
       if (!hasFinitePoles && !hasPolyPart && !a0WithGamma && Complex.abs2(q) > QD.ZERO_THRESHOLD) {
         throw new Error(
-          "Family.unboundedLQD_singular: no unbounded singular LQD exists for h = q/w " +
-          "with no finite poles, no polynomial part, and no higher-order pole at 0 " +
-          "(add a finite pole, a polyPart term, a higher-order residue at 0, or set q = 0)."
+          "Family.unboundedLQD_singular: no algebraic QD exists for h = q/w with empty " +
+          "principal part at the origin. Add a finite pole, a polynomial part, an extra " +
+          "residue at 0, or set q = 0."
         );
       }
       return { lqd: true, unbounded: true, singular: true, c, q: Complex.clone(q) };
@@ -988,5 +878,10 @@
     verifyQuadratureIdentity: verifyQuadratureIdentity_UQDLS,
   };
   QD.registerFamily('unboundedLQD_singular');
+
+  // Exported so seeds-uqd-lqd-singular.js can build its initial guess (B3).
+  QD._finitePolesView_UQDLS = _finitePolesView;
+  QD._seedLqdGamma_UQDLS    = _seedLqdGamma;
+  QD.computeTargetF_UQDLS   = computeTargetF_UQDLS;
 
 })();

@@ -10,8 +10,18 @@
 // And UNBOUNDED classical QD with Laurent-at-∞ φ:
 //   φ(z) = c·z + F_0 + F_1/z + … (handled by unboundedQD).
 //
+// WEIGHTED families take the rational KERNEL (R#/r#) rather than φ directly:
+//   • bounded power/log     boundedPowerQD / boundedLogQD                (0∉Ω)
+//   • bounded singular       boundedPowerQDSingular / boundedLogQDSingular (0∈Ω)
+//     — see the "SINGULAR weighted forward kernels" section header.
+//   • unbounded power/log + singular  unboundedPowerQD[Singular] /
+//     unboundedLogQD[Singular] (∞∈Ω) — see the "UNBOUNDED weighted forward
+//     kernels (Theorem 4.3.7)" section header for the full math + conventions.
+//
 // All variants produce hData of the same shape used by the inverse-problem
-// solver:  hData = { poles: [{a, principal: [...]}, ...], polyPart: [...] }.
+// solver:  hData = { poles: [{a, principal: [...]}, ...], polyPart: [...] }
+// (singular variants additionally return an origin term separately: r₀ for
+// bounded-PQD, q for bounded-/unbounded-LQD — unbounded-PQD-singular has none).
 //
 // DERIVATION (bounded polynomial case; see Graven thesis §3.2 for the full
 // argument and §4.3 / Ch.6 for the rational / AQD generalizations):
@@ -1172,6 +1182,852 @@
     };
   }
 
+  // ===========================================================================
+  // WEIGHTED-FAMILY FORWARD KERNELS (φ → h) — bounded non-singular LQD + PQD.
+  // ---------------------------------------------------------------------------
+  // Classically rational φ ⟺ QD, so the Direct tab takes a rational φ. For the
+  // weighted families the RATIONAL class is the KERNEL, not φ:
+  //   • PQD:  φ = (R#(z))^{1/α},  R# rational  ⟺  power-weighted QD
+  //   • LQD:  φ = w₀·exp(r#(z)),  r# rational  ⟺  log-weighted QD
+  // So these kernels take the rational kernel K (= R# / r#), reuse the INVERSE
+  // solver's parametrization, and read h off by INVERTING the same (★) chain the
+  // inverse solver encodes — guaranteed-correct, no new weighted-Faber math.
+  //
+  // Per pole the (★) chain C_j → A_j is LINEAR and upper-triangular:
+  //   PQD:  A_{j,k} = α·inverseFaberAtPole( modifiedResidues_PQD(C_j,α), φ̃_j )[k]
+  //   LQD:  A_{j,k} =   inverseFaberAtPole( LqdModifiedResidues(C_j,a_j), φ̃_j )[k]
+  // We build that small matrix by PROBING the existing (tested) forward functions
+  // on unit residue vectors, then back-substitute for C_j — so no inverse formula
+  // is hand-derived. A_j (the kernel's Möbius-branch coeffs) is recovered from the
+  // kernel's principal part at ζ_p = 1/conj(z_j) by another small triangular solve.
+  // ===========================================================================
+
+  // Upper-triangular complex back-substitution: solve M·x = b where M[i][j] = 0
+  // for j < i (rows/cols 0-indexed, length n). Returns x (Complex[n]).
+  function solveUpperTriComplex(M, b, n) {
+    const x = new Array(n);
+    for (let i = n - 1; i >= 0; i--) {
+      let acc = C.clone(b[i]);
+      for (let j = i + 1; j < n; j++) acc = C.sub(acc, C.mul(M[i][j], x[j]));
+      if (C.abs(M[i][i]) < 1e-300) throw new Error("solveUpperTriComplex: singular diagonal at " + i);
+      x[i] = C.div(acc, M[i][i]);
+    }
+    return x;
+  }
+
+  // Principal-part residues of a rational N/D at a root z0 of D of multiplicity
+  // mult: returns [d_1, …, d_mult] with d_s = coeff of (z − z0)^{-s}. Mirrors the
+  // per-pole extraction inside boundedQDRational (steps 1–4).
+  function localPrincipalResidues(N, D, z0, mult) {
+    const Ntayl = polyTaylorAt(N, z0, mult - 1);            // length mult
+    const Dtayl = polyTaylorAt(D, z0, 2 * mult - 1);        // length 2·mult
+    const Dtilde = new Array(mult);
+    for (let i = 0; i < mult; i++) Dtilde[i] = Dtayl[mult + i] || { re: 0, im: 0 };
+    if (C.abs(Dtilde[0]) < 1e-12) throw new Error("localPrincipalResidues: wrong multiplicity at z=" + complexFmt(z0));
+    const DtildeInv = T.reciprocal(Dtilde, mult - 1);
+    const F = T.mul(Ntayl, DtildeInv, mult - 1);            // length mult
+    const d = new Array(mult);
+    for (let s = 1; s <= mult; s++) d[s - 1] = F[mult - s];
+    return d;
+  }
+
+  // Möbius-branch coefficients A_{j,1..m} of a kernel from its principal-part
+  // residues dR at ζ_p = 1/conj(z_j). The branch basis term
+  //   basis_k(z) = z^k / (1 − conj(z_j) z)^k
+  // has, at ζ_p, principal part  Σ_s B[s][k] (z−ζ_p)^{-s}  with (k ≥ s)
+  //   B[s][k] = (−1)^k · binom(k, k−s) · ζ_p^{k+s}
+  // (since 1 − conj(z_j) z = −conj(z_j)(z − ζ_p) and conj(z_j) = 1/ζ_p). Then
+  //   dR_s = Σ_{k≥s} conj(A_{j,k}) · B[s][k],  an upper-triangular solve for conj(A).
+  function branchCoeffsFromResidues(dR, zeta, m) {
+    // Integer binomials binom(k, k−s) for 1 ≤ s ≤ k ≤ m.
+    const nCr = (nn, rr) => { let r = 1; for (let i = 0; i < rr; i++) r = r * (nn - i) / (i + 1); return Math.round(r); };
+    // ζ^p for p = 0..2m.
+    const zpow = [{ re: 1, im: 0 }];
+    for (let p = 1; p <= 2 * m; p++) zpow.push(C.mul(zpow[p - 1], zeta));
+    const B = [];
+    for (let s = 1; s <= m; s++) {
+      const row = new Array(m).fill(null).map(() => ({ re: 0, im: 0 }));
+      for (let k = s; k <= m; k++) {
+        const sign = (k % 2 === 0) ? 1 : -1;
+        row[k - 1] = C.scale(zpow[k + s], sign * nCr(k, k - s));
+      }
+      B.push(row);
+    }
+    const conjA = solveUpperTriComplex(B, dR, m);            // conj(A_{j,k})
+    return conjA.map(x => C.conj(x));                        // A_{j,k}
+  }
+
+  // Real-scale a Taylor series (multiply every coefficient by a real factor).
+  function scaleTaylorReal(tay, s) { return tay.map(c => ({ re: c.re * s, im: c.im * s })); }
+
+  // boundedPowerQD: rational R#(z) + α → hData (bounded power-weighted QD, 0∉Ω).
+  //   Rhash:  { num: Complex[], den: Complex[] }  (ascending-power), or Complex[]
+  //           (polynomial ⇒ den = [1], degenerate: no finite poles).
+  //   alpha:  real > 0, ≠ 1.
+  // Returns { hData:{poles:[{a,principal}]}, poleData, w0, alpha, warnings }.
+  function boundedPowerQD(Rhash, alpha, options) {
+    options = options || {};
+    const validateTol = options.validateTol || 1e-6;
+    if (!(alpha > 0) || Math.abs(alpha - 1) < 1e-12) {
+      throw new Error("Direct.boundedPowerQD: need α > 0, α ≠ 1 (α = 1 is the classical QD)");
+    }
+    let num, den;
+    if (Array.isArray(Rhash)) { num = trimTrailingZeros(Rhash.slice()); den = [{ re: 1, im: 0 }]; }
+    else { num = trimTrailingZeros(Rhash.num.slice()); den = trimTrailingZeros(Rhash.den.slice()); }
+
+    // R# must be analytic AND non-vanishing on 𝔻̄: den roots and num roots all
+    // strictly outside the closed disk (the αth root is single-valued only then).
+    const evalRat = (z) => C.div(evalPolyAscending(num, z), evalPolyAscending(den, z));
+    if (den.length > 1) for (const r of polynomialRoots(den)) {
+      if (Math.hypot(r.re, r.im) <= 1 + validateTol)
+        throw new Error("Direct.boundedPowerQD: R# has a pole at |z| ≤ 1; not analytic on 𝔻̄.");
+    }
+    if (num.length > 1) for (const r of polynomialRoots(num)) {
+      if (Math.hypot(r.re, r.im) <= 1 + validateTol)
+        throw new Error("Direct.boundedPowerQD: R# has a zero at |z| ≤ 1; (R#)^{1/α} is not single-valued.");
+    }
+
+    // w₀ = φ(0) = (R#(0))^{1/α} on the principal branch (the gauge anchor).
+    const R0 = evalRat({ re: 0, im: 0 });
+    const w0 = C.cpow(R0, 1 / alpha);
+    const anchorArg0 = Math.atan2(R0.im, R0.re);            // = α·arg(w0)
+
+    // Poles ζ_p of R# (roots of den, |ζ_p| > 1) ⇒ node preimages z_j = 1/conj(ζ_p).
+    const hPoles = [], poleData = [], warnings = [];
+    if (den.length <= 1) {
+      return { hData: { poles: [] }, poleData: [], w0, alpha,
+               warnings: ['R# is a polynomial (no finite poles) — degenerate; h is constant.'] };
+    }
+    const groups = groupRootsByMultiplicity(polynomialRoots(den), 1e-7);
+    const evalRHashRaw = (z /*, phi */) => evalRat(z);
+
+    for (const g of groups) {
+      const zeta = g.root, m = g.multiplicity;
+      const m2 = zeta.re * zeta.re + zeta.im * zeta.im;
+      const zj = { re: zeta.re / m2, im: -zeta.im / m2 };    // 1/conj(ζ_p)
+
+      // A_j: kernel Möbius-branch coeffs from R#'s principal part at ζ_p.
+      const dR = localPrincipalResidues(num, den, zeta, m);
+      const A = branchCoeffsFromResidues(dR, zeta, m);
+
+      // a_j = φ(z_j) on the anchored αth-root branch (continuous from φ(0)=w₀).
+      const argZj = QD.PqdCommon.argContAt(null, zj, evalRHashRaw, anchorArg0, { re: 0, im: 0 });
+      const Rzj = evalRat(zj);
+      const mag = Math.pow(C.abs2(Rzj), 0.5 / alpha);
+      const aj = { re: mag * Math.cos(argZj / alpha), im: mag * Math.sin(argZj / alpha) };
+
+      // φ̃_j = Taylor of (φ(z_j+t) − a_j), anchored: φ = exp((1/α)·logR#) with the
+      // log-constant overridden to the anchored value (so the WHOLE series sits on
+      // the correct sheet — same trick as phiTaylorAt_PQD).
+      const NT = polyTaylorAt(num, zj, m), DT = polyTaylorAt(den, zj, m);
+      const RT = T.mul(NT, T.reciprocal(DT, m), m);          // Taylor of R# at z_j
+      const L = T.log(RT, m);
+      L[0] = { re: L[0].re, im: argZj };                     // anchored log constant
+      const phiFull = T.exp(scaleTaylorReal(L, 1 / alpha), m); // φ Taylor, phiFull[0]=a_j
+      const phiTilde = T.zero(m + 1);
+      for (let i = 1; i <= m; i++) phiTilde[i] = C.clone(phiFull[i]);
+
+      // C_j: invert the (★) chain. Build the upper-triangular map C → A by probing
+      // the tested forward functions on unit residue vectors, then back-substitute.
+      const Mmat = [];
+      for (let k = 0; k < m; k++) Mmat.push(new Array(m));
+      for (let c = 0; c < m; c++) {
+        const e = new Array(m).fill(null).map((_, i) => ({ re: i === c ? 1 : 0, im: 0 }));
+        const D = QD.modifiedResidues_PQD({ a: aj, principal: e }, alpha);
+        const Aprobe = QD.Faber.inverseFaberAtPole(D, phiTilde).map(x => C.scale(x, alpha));
+        for (let k = 0; k < m; k++) Mmat[k][c] = Aprobe[k];
+      }
+      const Cj = solveUpperTriComplex(Mmat, A, m);
+
+      hPoles.push({ a: aj, principal: Cj });
+      poleData.push({ z: zj, w: aj, multiplicity: m });
+    }
+
+    return { hData: { poles: hPoles }, poleData, w0, alpha, warnings };
+  }
+
+  // boundedLogQD: rational r#(z) + w₀ → hData (bounded log-weighted QD, 0∉Ω̄).
+  //   φ = w₀·exp(r#(z)). exp is entire, so there is no branch/anchoring issue.
+  function boundedLogQD(rhash, w0, options) {
+    options = options || {};
+    const validateTol = options.validateTol || 1e-6;
+    let num, den;
+    if (Array.isArray(rhash)) { num = trimTrailingZeros(rhash.slice()); den = [{ re: 1, im: 0 }]; }
+    else { num = trimTrailingZeros(rhash.num.slice()); den = trimTrailingZeros(rhash.den.slice()); }
+    if (!w0 || C.abs(w0) < 1e-14) throw new Error("Direct.boundedLogQD: w₀ (= φ(0)) must be nonzero");
+
+    const evalRat = (z) => C.div(evalPolyAscending(num, z), evalPolyAscending(den, z));
+    if (den.length > 1) for (const r of polynomialRoots(den)) {
+      if (Math.hypot(r.re, r.im) <= 1 + validateTol)
+        throw new Error("Direct.boundedLogQD: r# has a pole at |z| ≤ 1; not analytic on 𝔻̄.");
+    }
+
+    const hPoles = [], poleData = [], warnings = [];
+    if (den.length <= 1) {
+      return { hData: { poles: [] }, poleData: [], w0, warnings: ['r# is a polynomial (no finite poles) — degenerate.'] };
+    }
+    const cexp = (z) => { const e = Math.exp(z.re); return { re: e * Math.cos(z.im), im: e * Math.sin(z.im) }; };
+    const groups = groupRootsByMultiplicity(polynomialRoots(den), 1e-7);
+
+    for (const g of groups) {
+      const zeta = g.root, m = g.multiplicity;
+      const m2 = zeta.re * zeta.re + zeta.im * zeta.im;
+      const zj = { re: zeta.re / m2, im: -zeta.im / m2 };
+
+      const dR = localPrincipalResidues(num, den, zeta, m);
+      const A = branchCoeffsFromResidues(dR, zeta, m);
+
+      // a_j = w₀·exp(r#(z_j)); φ Taylor = w₀·exp(Taylor of r# at z_j).
+      const aj = C.mul(w0, cexp(evalRat(zj)));
+      const NT = polyTaylorAt(num, zj, m), DT = polyTaylorAt(den, zj, m);
+      const rT = T.mul(NT, T.reciprocal(DT, m), m);          // Taylor of r# at z_j
+      const expR = T.exp(rT, m);
+      const phiFull = expR.map(c => C.mul(w0, c));           // phiFull[0] = a_j
+      const phiTilde = T.zero(m + 1);
+      for (let i = 1; i <= m; i++) phiTilde[i] = C.clone(phiFull[i]);
+
+      // C_j: invert the LQD (★): A = inverseFaberAtPole( D(C), φ̃ ),
+      // D_{s} = a_j·C_s + C_{s+1}. Probe + back-substitute.
+      const Mmat = [];
+      for (let k = 0; k < m; k++) Mmat.push(new Array(m));
+      for (let c = 0; c < m; c++) {
+        const e = new Array(m).fill(null).map((_, i) => ({ re: i === c ? 1 : 0, im: 0 }));
+        const D = QD.LqdCommon.modifiedResidues({ poles: [{ a: aj, principal: e }] })[0];
+        const Aprobe = QD.Faber.inverseFaberAtPole(D, phiTilde);
+        for (let k = 0; k < m; k++) Mmat[k][c] = Aprobe[k];
+      }
+      const Cj = solveUpperTriComplex(Mmat, A, m);
+
+      hPoles.push({ a: aj, principal: Cj });
+      poleData.push({ z: zj, w: aj, multiplicity: m });
+    }
+
+    return { hData: { poles: hPoles }, poleData, w0, warnings };
+  }
+
+  // ===========================================================================
+  // SINGULAR weighted forward kernels (0 ∈ Ω). φ carries a Blaschke factor
+  // b_{z₀}(z) whose zero z₀ ∈ 𝔻 is the preimage of the origin. z₀ is a FREE input
+  // in both (it sets where 0 sits inside Ω); by Theorem 4.3.3 the domain is a
+  // weighted QD for any rational kernel with a univalent φ. The two kernels use
+  // DIFFERENT routes to the residues:
+  //   • powerQD_singular     φ = b_{z₀}·(R#)^{1/α}   — `boundedPowerQDSingular`,
+  //       computed from the authoritative forward map Theorem 4.3.5; h = finite
+  //       poles + an origin term r₀/w. See that function's header for the formula.
+  //   • boundedLQD_singular  φ = γ·b_{z₀}·exp(r#)    — `boundedLogQDSingular`,
+  //       residues recovered by INVERTING the family's per-pole (★) builder
+  //       (`computeTargets`, block-diagonal per pole, via solveResiduesViaProbe —
+  //       the LQD (★) has no clean closed forward form here); h gains q/w.
+  // ===========================================================================
+
+  // Recover the per-pole residues C_j by probing a family's (★) builder (used by
+  // boundedLogQDSingular). For each pole j, the map C_j → A_j (target branch
+  // coeffs) is upper-triangular; build it column-by-column with unit residues and
+  // back-substitute. `poles` is [{a, m, A}] (node, multiplicity, target branch coeffs).
+  function solveResiduesViaProbe(fam, phi, poles) {
+    const zeros = (m) => Array.from({ length: m }, () => ({ re: 0, im: 0 }));
+    const out = [];
+    for (let j = 0; j < poles.length; j++) {
+      const mj = poles[j].m;
+      const M = []; for (let k = 0; k < mj; k++) M.push(new Array(mj));
+      for (let c = 0; c < mj; c++) {
+        const probe = { poles: poles.map((p, i) => ({
+          a: p.a,
+          principal: (i === j)
+            ? Array.from({ length: p.m }, (_, t) => ({ re: t === c ? 1 : 0, im: 0 }))
+            : zeros(p.m),
+        })) };
+        const A = fam.computeTargets(phi, probe).A[j];
+        for (let k = 0; k < mj; k++) M[k][c] = A[k];
+      }
+      out.push(solveUpperTriComplex(M, poles[j].A, mj));
+    }
+    return out;
+  }
+
+  // Shared front-end: parse a rational kernel + validate it's analytic on 𝔻̄
+  // (poles strictly outside), returning { num, den, evalRat, groups }. `needNonVanishing`
+  // additionally rejects zeros of the kernel inside 𝔻̄ (for the αth root).
+  function parseKernel(K, validateTol, needNonVanishing, label) {
+    let num, den;
+    if (Array.isArray(K)) { num = trimTrailingZeros(K.slice()); den = [{ re: 1, im: 0 }]; }
+    else { num = trimTrailingZeros(K.num.slice()); den = trimTrailingZeros(K.den.slice()); }
+    if (den.length > 1) for (const r of polynomialRoots(den)) {
+      if (Math.hypot(r.re, r.im) <= 1 + validateTol)
+        throw new Error(label + ': kernel has a pole at |z| ≤ 1; not analytic on 𝔻̄.');
+    }
+    if (needNonVanishing && num.length > 1) for (const r of polynomialRoots(num)) {
+      if (Math.hypot(r.re, r.im) <= 1 + validateTol)
+        throw new Error(label + ': kernel has a zero at |z| ≤ 1; the αth root is not single-valued.');
+    }
+    const evalRat = (z) => C.div(evalPolyAscending(num, z), evalPolyAscending(den, z));
+    const groups = den.length > 1 ? groupRootsByMultiplicity(polynomialRoots(den), 1e-7) : [];
+    return { num, den, evalRat, groups };
+  }
+
+  function validateZ0(z0, label) {
+    if (!z0 || C.abs2(z0) < 1e-18) throw new Error(label + ': z₀ must be nonzero (interior preimage of the origin).');
+    if (C.abs(z0) >= 1 - 1e-9) throw new Error(label + ': z₀ must satisfy 0 < |z₀| < 1.');
+  }
+
+  // Weighted area t = ∫_Ω |w|^{2(α−1)} dA via the Green's-form boundary integral
+  //   t = (1/(αN)) Σ conj(w)·|w|^{2(α−1)}·(φ'·z),  z = e^{iθ}
+  // (φ'·z obtained by a radial central difference; φ from QD.evalPhi). Returns the
+  // complex value (≈ real for a true PQD); used as the t/w normalization term.
+  function weightedAreaPQD(phi, alpha, N) {
+    const h = 1e-6; let acc = { re: 0, im: 0 };
+    for (let n = 0; n < N; n++) {
+      const th = 2 * Math.PI * n / N, z = { re: Math.cos(th), im: Math.sin(th) };
+      const w = QD.evalPhi(z, phi);
+      const zp = { re: z.re * (1 + h), im: z.im * (1 + h) }, zm = { re: z.re * (1 - h), im: z.im * (1 - h) };
+      const wp = QD.evalPhi(zp, phi), wm = QD.evalPhi(zm, phi);
+      const pz = { re: (wp.re - wm.re) / (2 * h), im: (wp.im - wm.im) / (2 * h) };   // φ'·z
+      const w2 = w.re * w.re + w.im * w.im;
+      if (w2 < 1e-30) continue;
+      acc = C.add(acc, C.mul(C.scale(C.conj(w), Math.pow(w2, alpha - 1)), pz));
+    }
+    return C.scale(acc, 1 / (alpha * N));
+  }
+
+  // boundedPowerQDSingular: rational R#(z) + α + z₀ → hData (bounded SINGULAR PQD,
+  // 0∈Ω), via the AUTHORITATIVE forward map Theorem 4.3.5 (Eq 4.13):
+  //   h(w) = (1/(α·w))·Φ_φ( AnalyticIn_{𝔻∁}[ r·r# ] )(w) + t/w,
+  // where r#=R#, r(z)=conj(r#(1/conj z)) is its Schwarz reflection (so r·r# is
+  // rational with in-𝔻 poles exactly at the node-preimages z_j), Φ_φ is the
+  // forward Faber transform (forwardLocalPrincipal), and t = ∫_Ω|w|^{2(α−1)}dA is
+  // the weighted area — the t/w NORMALIZATION term (returned separately, NOT a
+  // quadrature node). By Theorem 4.3.3 any rational R# with a univalent φ is a PQD,
+  // so z₀ is FREE and realizability ⟺ univalence of φ.
+  function boundedPowerQDSingular(Rhash, alpha, z0, options) {
+    options = options || {};
+    const label = 'Direct.boundedPowerQDSingular';
+    if (!(alpha > 0) || Math.abs(alpha - 1) < 1e-12) throw new Error(label + ': need α > 0, α ≠ 1.');
+    validateZ0(z0, label);
+    const { num, den, evalRat, groups } = parseKernel(Rhash, options.validateTol || 1e-6, true, label);
+    if (den.length <= 1) return { hData: { poles: [] }, poleData: [], z0: C.clone(z0), t: { re: 0, im: 0 }, warnings: ['R# is a polynomial (no finite poles) — degenerate.'] };
+    if ((num.length - 1) > (den.length - 1)) throw new Error(label + ': R# must be a proper rational (deg num ≤ deg den).');
+
+    const absZ0 = C.abs(z0);
+    const R0 = evalRat({ re: 0, im: 0 });
+    const w0 = C.scale(C.cpow(R0, 1 / alpha), absZ0);            // |z₀|·(R#(0))^{1/α}
+    const anchorArg0 = Math.atan2(R0.im, R0.re);                 // = α·arg(w0)
+    const evalRHashRaw = (z) => evalRat(z);
+
+    // Family phi (branches from R#'s principal parts) — for evalPhi / univalence /
+    // the family verifier on the returned φ.
+    const branches = [], geom = [];
+    for (const g of groups) {
+      const zeta = g.root, m = g.multiplicity;
+      const m2 = zeta.re * zeta.re + zeta.im * zeta.im;
+      const zj = { re: zeta.re / m2, im: -zeta.im / m2 };
+      const A = branchCoeffsFromResidues(localPrincipalResidues(num, den, zeta, m), zeta, m);
+      branches.push({ z: zj, A }); geom.push({ zj, m });
+    }
+    // Guard: z₀ must not coincide with a node-preimage z_j (else a_j = φ(z_j) = 0,
+    // i.e. a finite node collides with the origin — degenerate).
+    for (const g of geom) {
+      if (C.abs(C.sub(z0, g.zj)) < 1e-6)
+        throw new Error(label + ': z₀ coincides with a node preimage (node at the origin) — choose a different z₀.');
+    }
+
+    const phi = { family: 'powerQD_singular', unbounded: false, alpha, w0, z0: C.clone(z0), branches };
+
+    // REALIZABILITY ⟺ univalence of φ (Thm 4.3.3 ⇒ QD-property is then automatic).
+    let univalent = false;
+    try { univalent = QD.isBoundaryUnivalent(phi); } catch (e) { univalent = false; }
+    if (!univalent) {
+      return { hData: { poles: [] }, poleData: [], w0, z0: C.clone(z0), t: { re: 0, im: 0 }, phi, univalent: false,
+               warnings: ['Not realizable: φ = b_{z₀}·(R#)^{1/α} is not univalent (boundary self-intersects). Adjust R#, z₀, or α.'] };
+    }
+
+    // r·r# (rational). r = reflection of R#=N/D: r = z^{degD−degN}·Ñ/D̃ with
+    // Ñ=reverseConjugate(N), D̃=reverseConjugate(D). r·r# = z^{…}·(Ñ·N)/(D̃·D).
+    const Ntil = reverseConjugate(num), Dtil = reverseConjugate(den);
+    let numRR = mulPolys(Ntil, num);
+    if (den.length - num.length > 0) numRR = shiftPolynomialUp(numRR, den.length - num.length);
+    const denRR = mulPolys(Dtil, den);
+
+    // Per node: AnalyticIn_{𝔻∁}[r·r#] principal part at z_j → Φ_φ → (1/α)·(w·h)
+    // modified residues → h residues C_j.
+    const hPoles = [], poleData = [];
+    for (const g of geom) {
+      const zj = g.zj, m = g.m;
+      const d = localPrincipalResidues(numRR, denRR, zj, m);     // residues of r·r# at z_j
+
+      const aj = QD.evalPhi(zj, phi);                            // a_j = φ(z_j)
+      // Anchored singular Taylor φ̃_j = b_{z₀}·(R#)^{1/α} at z_j (constant dropped).
+      const argZj = QD.PqdCommon.argContAt(null, zj, evalRHashRaw, anchorArg0, { re: 0, im: 0 });
+      const RT = T.mul(polyTaylorAt(num, zj, m), T.reciprocal(polyTaylorAt(den, zj, m), m), m);
+      const L = T.log(RT, m); L[0] = { re: L[0].re, im: argZj };
+      const root = T.exp(scaleTaylorReal(L, 1 / alpha), m);      // (R#)^{1/α} anchored
+      const phiFull = T.mul(QD.LqdCommon.blaschkeTaylor(zj, z0, m), root, m);
+      const phiTilde = T.zero(m + 1);
+      for (let i = 1; i <= m; i++) phiTilde[i] = C.clone(phiFull[i]);
+
+      // Φ_φ(g) principal part at a_j; ÷α gives the (w·h) modified residues D̃_k.
+      const Dt = forwardLocalPrincipal(d, phiTilde).map(p => C.scale(p, 1 / alpha));
+      // h residues from w·h: D̃_k = a_j·C_k + C_{k+1} ⇒ C_k = (D̃_k − C_{k+1})/a_j.
+      const Cj = new Array(m);
+      for (let k = m; k >= 1; k--) {
+        const above = (k < m) ? Cj[k] : { re: 0, im: 0 };
+        Cj[k - 1] = C.div(C.sub(Dt[k - 1], above), aj);
+      }
+      hPoles.push({ a: aj, principal: Cj });
+      poleData.push({ z: zj, w: aj, multiplicity: m });
+    }
+
+    const t = weightedAreaPQD(phi, alpha, 2000);                 // weighted area ∫_Ω|w|^{2(α−1)}dA
+    // Origin charge (the t/w term of Eq 4.13): the f=1 quadrature identity forces
+    //   ∫_Ω|w|^{2(α−1)}dA = Σ_j C_{j,1} + r₀,  so r₀ = t − Σ C_{j,1}.
+    // h(w) = Σ_finite C_{j,k}/(w−a_j)^k + r₀/w. r₀ vanishes exactly on the
+    // mass-constrained "no-origin-charge" class the inverse solver targets.
+    let sumC1 = { re: 0, im: 0 };
+    for (const p of hPoles) sumC1 = C.add(sumC1, p.principal[0]);
+    const originResidue = C.sub(t, sumC1);
+
+    return { hData: { poles: hPoles }, poleData, w0, z0: C.clone(z0), t, originResidue, phi, univalent: true, warnings: [] };
+  }
+
+  // boundedLogQDSingular: rational r#(z) + w₀ + z₀ → hData (bounded LQD, 0∈Ω).
+  // h has an ORIGIN pole at w=0 with residue q = ln|γ|² + r#(z₀) + conj(r#(1/conj z₀)),
+  // returned separately (the inverse takes it via opts.q).
+  function boundedLogQDSingular(rhash, w0, z0, options) {
+    options = options || {};
+    const label = 'Direct.boundedLogQDSingular';
+    if (!w0 || C.abs(w0) < 1e-14) throw new Error(label + ': w₀ (= φ(0)) must be nonzero.');
+    validateZ0(z0, label);
+    const { num, den, groups } = parseKernel(rhash, options.validateTol || 1e-6, false, label);
+    if (den.length <= 1) return { hData: { poles: [] }, poleData: [], w0, z0, q: { re: 0, im: 0 }, warnings: ['r# is a polynomial (no finite poles) — degenerate.'] };
+
+    const absZ0 = C.abs(z0);
+    const gamma = C.scale(w0, 1 / absZ0);                  // γ = w₀/|z₀|
+    const branches = [], geom = [];
+    for (const g of groups) {
+      const zeta = g.root, m = g.multiplicity;
+      const m2 = zeta.re * zeta.re + zeta.im * zeta.im;
+      const zj = { re: zeta.re / m2, im: -zeta.im / m2 };
+      const A = branchCoeffsFromResidues(localPrincipalResidues(num, den, zeta, m), zeta, m);
+      branches.push({ z: zj, A }); geom.push({ zj, m, A });
+    }
+    const phi = { family: 'boundedLQD_singular', unbounded: false, w0, z0: C.clone(z0), gamma, branches };
+    const poles = geom.map(g => ({ a: QD.evalPhi(g.zj, phi), m: g.m, A: g.A }));
+    const Cs = solveResiduesViaProbe(QD.Family.boundedLQD_singular, phi, poles);
+
+    // Origin residue (the (●₀) q-equation), via the family's r̃# (constant 0).
+    const rZ0 = QD.LqdCommon.evalRHash(z0, phi);
+    const oneOverConjZ0 = C.scale(z0, 1 / C.abs2(z0));
+    const rInv = QD.LqdCommon.evalRHash(oneOverConjZ0, phi);
+    const q = { re: Math.log(C.abs2(gamma)) + rZ0.re + rInv.re, im: rZ0.im - rInv.im };
+    phi.q = q;   // complete the phi for the family identity verifier
+
+    return {
+      hData: { poles: poles.map((p, j) => ({ a: p.a, principal: Cs[j] })) },
+      poleData: geom.map((g, j) => ({ z: g.zj, w: poles[j].a, multiplicity: g.m })),
+      w0, z0: C.clone(z0), gamma, q, phi, warnings: [],
+    };
+  }
+
+  // ===========================================================================
+  // UNBOUNDED weighted forward kernels (∞ ∈ Ω) — Theorem 4.3.7 (Laurent-at-∞).
+  // ---------------------------------------------------------------------------
+  // φ : 𝔻* → Ω, φ(∞)=∞, φ'(∞)=c>0. The rational class is again the KERNEL r#,
+  // now analytic on the closed EXTERIOR |z|≥1 (poles strictly INSIDE 𝔻):
+  //   • PQD:  φ = z·(r#(z))^{1/α},   r#(∞) = c^α            (Family.unboundedPQD)
+  //   • LQD:  φ = c·z·exp(r̃#(z)),     r#(∞) = 0 (gauge)      (Family.unboundedLQD)
+  // r#'s in-disk poles are at ζ_p = 1/conj(z_j); the node-preimages z_j = 1/conj(ζ_p)
+  // therefore lie OUTSIDE the disk (|z_j| > 1). A pole of r# AT z = 0 (order N_G)
+  // is the Laurent-at-∞ block Σ_l G_l/z^l and is what gives h a polynomial part at
+  // ∞ (degree N_G − 1); other in-disk poles ζ_p ≠ 0 are the finite-node branches.
+  //
+  // The returned h is { finite poles a_j = φ(z_j) } + a polynomial-at-∞ part
+  // polyPart (present iff r# has a pole at 0). There is NO origin term: the author-
+  // confirmed Theorem 4.3.7 forward map (Eq UPQDDirectProblemSol) reads
+  //   h(w) = (1/(α·w))·Φ_φ( AnalyticIn_𝔻[ r·r# ] )(w) − t/w,
+  //          t = ∫_{Ω^c} |w|^{2(α−1)} dA(w)   (over the bounded complement K),
+  // but the (1/(α·w))·Φ_φ(…) term has a pole at w=0 of residue EXACTLY +t, so the
+  // −t/w cancels it: the realized h is analytic at 0 (net origin residue ≡ 0 for
+  // every realizable config — verified empirically to ~1e-16 across the §DF cases).
+  // This is the unbounded mirror of bounded Eq 4.13 with two differences (the
+  // analytic projection swaps to the disk interior — principal parts at the
+  // EXTERIOR z_j — and the t/w sign flips), but in the {poles, polyPart}
+  // representation shared with the inverse solver / Schwarz / sphere subsystems
+  // the origin term is absent.
+  //
+  // IMPLEMENTATION: rather than evaluate the closed Φ_φ(…) form (whose global
+  // w=0 cancellation and ∞-growth are delicate), we INVERT the inverse solver's
+  // own tested forward chain — the exact codification of Theorem 4.3.7:
+  //   • finite poles  — invert (★)_A (computeTargets(…).A, upper-triangular per
+  //     pole) via solveResiduesViaProbe, exactly as the bounded NON-singular
+  //     kernels do;
+  //   • polyPart      — invert (★)_F (computeTargets(…).F, linear) via
+  //     forwardPolyPartAtInfinity.
+  // This round-trips against the inverse solver by construction and is validated
+  // at machine precision by the family identity verifier (§DF). REALIZABILITY ⟺
+  // univalence of φ (Theorem 4.3.3); a non-univalent kernel is reported as
+  // not-realizable rather than returning bad data.
+  // ===========================================================================
+
+  // Parse a rational kernel that must be analytic (and, if needNonVanishing, also
+  // non-vanishing) on the closed EXTERIOR |z| ≥ 1 — i.e. poles (and zeros) strictly
+  // inside 𝔻. Exterior sibling of parseKernel. Returns { num, den, evalRat }.
+  function parseKernelExterior(K, validateTol, needNonVanishing, label) {
+    let num, den;
+    if (Array.isArray(K)) { num = trimTrailingZeros(K.slice()); den = [{ re: 1, im: 0 }]; }
+    else { num = trimTrailingZeros(K.num.slice()); den = trimTrailingZeros(K.den.slice()); }
+    if (den.length > 1) for (const r of polynomialRoots(den)) {
+      if (Math.hypot(r.re, r.im) >= 1 - validateTol)
+        throw new Error(label + ': r# has a pole at |z| ≥ 1; r# must be analytic on the closed exterior |z| ≥ 1.');
+    }
+    if (needNonVanishing && num.length > 1) for (const r of polynomialRoots(num)) {
+      if (Math.hypot(r.re, r.im) >= 1 - validateTol)
+        throw new Error(label + ': r# has a zero at |z| ≥ 1; (r#)^{1/α} is not single-valued on the exterior.');
+    }
+    const evalRat = (z) => C.div(evalPolyAscending(num, z), evalPolyAscending(den, z));
+    return { num, den, evalRat };
+  }
+
+  // Split a rational kernel r# = num/den (analytic on |z|≥1) into the inverse
+  // solver's phi data. Returns { rInf, polyA, geom } where:
+  //   rInf  = r#(∞) (= c^α; leading-coeff ratio; requires deg num = deg den),
+  //   polyA = [G_1,…,G_{N_G}] — the principal part of r# at z=0 (the Laurent block;
+  //           [] if r# has no pole at 0),
+  //   geom  = [{ zeta, zj, m, A }] for each in-disk pole ζ_p ≠ 0 (m = multiplicity),
+  //           with z_j = 1/conj(ζ_p) the exterior node-preimage and A its kernel
+  //           Möbius-branch coefficients.
+  function splitUnboundedKernel(num, den, label) {
+    if ((num.length - 1) !== (den.length - 1))
+      throw new Error(label + ': r# must satisfy deg(num) = deg(den) so that r#(∞) = c^α is finite and nonzero.');
+    const rInf = C.div(num[num.length - 1], den[den.length - 1]);
+    const groups = den.length > 1 ? groupRootsByMultiplicity(polynomialRoots(den), 1e-7) : [];
+    let polyA = [];
+    const geom = [];
+    for (const g of groups) {
+      const zeta = g.root, m = g.multiplicity;
+      if (C.abs(zeta) < 1e-7) {                                   // pole of r# at z=0 ⇒ Laurent block
+        polyA = localPrincipalResidues(num, den, { re: 0, im: 0 }, m);
+        continue;
+      }
+      const m2 = zeta.re * zeta.re + zeta.im * zeta.im;
+      const zj = { re: zeta.re / m2, im: -zeta.im / m2 };          // 1/conj(ζ_p), exterior
+      const A = branchCoeffsFromResidues(localPrincipalResidues(num, den, zeta, m), zeta, m);
+      geom.push({ zeta, zj, m, A });
+    }
+    return { rInf, polyA, geom };
+  }
+
+  // The hardwired constant r0Const of the family's r# (= c^α for non-sing PQD,
+  // |c·z₀|^α for singular). It is NOT r#(∞): the family's branch basis u^k =
+  // z^k/(1−conj(z_j)z)^k has a nonzero value at ∞ (u(∞) = −1/conj(z_j)), so to
+  // make the family's r# EQUAL the input r# the constant must absorb those
+  // branch-at-∞ contributions:
+  //   r0Const = r#(∞) − Σ_j Σ_k conj(A_{j,k})·(−1/conj(z_j))^k.
+  // (The Laurent block G_l/z^l vanishes at ∞ and does not contribute.) For a
+  // valid unbounded PQD r0Const must be REAL POSITIVE (= c^α). [The LQD families
+  // are immune to this because their r# − r#(∞) gauge cancels any constant.]
+  function unboundedR0Const(rInf, geom) {
+    let s = C.clone(rInf);
+    for (const g of geom) {
+      const base = C.scale(C.inv(C.conj(g.zj)), -1);          // −1/conj(z_j)
+      let pw = C.clone(base);                                  // base^k, k=1…
+      for (let k = 1; k <= g.A.length; k++) {
+        s = C.sub(s, C.mul(C.conj(g.A[k - 1]), pw));
+        pw = C.mul(pw, base);
+      }
+    }
+    return s;
+  }
+
+  // Invert the unbounded family's (★)_F block: given phi (hence the kernel's
+  // Laurent block G_l), solve the LINEAR system fam.computeTargets(phi, {polyPart}).F
+  // = 0 for h's polynomial-at-∞ part polyPart (length n+1). Probes the tested
+  // forward residual on unit polyPart vectors and back-substitutes — the system is
+  // triangular (polyPart[m] first enters the s^{n−m} residual coefficient, with
+  // diagonal c^m ≠ 0).
+  function forwardPolyPartAtInfinity(fam, phi, n) {
+    if (n < 0) return [];
+    const N = n + 1;
+    const zeroPP = Array.from({ length: N }, () => ({ re: 0, im: 0 }));
+    const b = fam.computeTargets(phi, { poles: [], polyPart: zeroPP }).F;   // firstTerm (polyPart = 0)
+    const cols = [];
+    for (let m = 0; m < N; m++) {
+      const e = zeroPP.map((_, i) => ({ re: i === m ? 1 : 0, im: 0 }));
+      const Fe = fam.computeTargets(phi, { poles: [], polyPart: e }).F;
+      cols.push(b.map((bi, i) => C.sub(bi, Fe[i])));                        // hTerm(e_m)
+    }
+    const pp = new Array(N);
+    for (let i = 0; i < N; i++) {                                           // row i introduces m = n−i
+      const mNew = n - i;
+      let acc = C.clone(b[i]);
+      for (let mm = mNew + 1; mm < N; mm++) acc = C.sub(acc, C.mul(cols[mm][i], pp[mm]));
+      if (C.abs(cols[mNew][i]) < 1e-300) throw new Error('forwardPolyPartAtInfinity: singular (★)_F system');
+      pp[mNew] = C.div(acc, cols[mNew][i]);
+    }
+    return pp;
+  }
+
+  // unboundedPowerQD: rational r#(z) + α → hData (unbounded power-weighted QD,
+  // 0∉Ω, ∞∈Ω) via Theorem 4.3.7 (see section header). Returns
+  //   { hData:{poles, polyPart}, poleData, c, alpha, phi, univalent, warnings }.
+  function unboundedPowerQD(rHash, alpha, options) {
+    options = options || {};
+    const label = 'Direct.unboundedPowerQD';
+    if (!(alpha > 0) || Math.abs(alpha - 1) < 1e-12) throw new Error(label + ': need α > 0, α ≠ 1.');
+    const { num, den } = parseKernelExterior(rHash, options.validateTol || 1e-6, true, label);
+    const { rInf, polyA, geom } = splitUnboundedKernel(num, den, label);
+    const r0Const = unboundedR0Const(rInf, geom);
+    if (Math.abs(r0Const.im) > 1e-6 || r0Const.re <= 0)
+      throw new Error(label + ': r#(∞)−Σbranch(∞) must be real positive (= c^α) for a valid unbounded PQD. Got ' + complexFmt(r0Const) + '.');
+    const c = Math.pow(r0Const.re, 1 / alpha);
+
+    const phi = { family: 'unboundedPQD', unbounded: true, alpha, c, polyA, branches: geom.map(g => ({ z: g.zj, A: g.A })) };
+    const fam = QD.Family.unboundedPQD;
+
+    // REALIZABILITY ⟺ univalence of φ (Thm 4.3.3); otherwise report not-realizable.
+    let univalent = false;
+    try { univalent = QD.isBoundaryUnivalent(phi); } catch (e) { univalent = false; }
+    if (!univalent) {
+      return { hData: { poles: [], polyPart: [] }, poleData: [], c, alpha, phi, univalent: false,
+               warnings: ['Not realizable: φ = z·(r#)^{1/α} is not univalent (boundary self-intersects). Adjust r# or α.'] };
+    }
+    // The NON-singular family requires 0 ∉ Ω (0 ∈ K). If this r# yields 0 ∈ Ω the
+    // domain is SINGULAR — h would carry a Blaschke/origin structure the
+    // non-singular verifier cannot represent — so report it (use the singular
+    // kernel with a z₀ instead).
+    if (QD.originInsideOmega(phi)) {
+      return { hData: { poles: [], polyPart: [] }, poleData: [], c, alpha, phi, univalent: true, originInside: true,
+               warnings: ['0 ∈ Ω for this r#: the domain is SINGULAR. Use unboundedPowerQDSingular (provide z₀).'] };
+    }
+
+    // Finite poles: invert (★)_A (computeTargets.A) per exterior node z_j.
+    const poles = geom.map(g => ({ a: fam.evalPhi(g.zj, phi), m: g.m, A: g.A }));
+    const Cs = solveResiduesViaProbe(fam, phi, poles);
+    const hPoles = poles.map((p, j) => ({ a: p.a, principal: Cs[j] }));
+    const poleData = geom.map((g, j) => ({ z: g.zj, w: poles[j].a, multiplicity: g.m }));
+
+    // Polynomial-at-∞ part (degree n = N_G − 1, inferred from r#'s Laurent block):
+    // invert (★)_F (computeTargets.F, linear in polyPart).
+    const polyPart = forwardPolyPartAtInfinity(fam, phi, polyA.length - 1);
+
+    return { hData: { poles: hPoles, polyPart }, poleData, c, alpha, phi, univalent: true, warnings: [] };
+  }
+
+  // unboundedPowerQDSingular: rational r#(z) + α → hData (unbounded SINGULAR PQD,
+  // 0∈Ω, ∞∈Ω). φ = z·b_{z₀}·(r#)^{1/α}, with z₀ ∈ 𝔻* (|z₀|>1) the origin-preimage.
+  //
+  // z₀ is NOT a free parameter here (unlike the bounded singular case): the
+  // "no pole at 0" structure forces the z₀-closure r(z₀)=0 (thesis Prop 4.6.3),
+  // where r = reflection of r#. r(z₀)=0 ⟺ r#(1/conj z₀)=0, i.e. z₀ = 1/conj(ρ) for
+  // a ZERO ρ of r# (a root of the numerator, |ρ|<1 ⇒ |z₀|>1). So z₀ is DERIVED
+  // from r#'s numerator roots; options.z0 (optional) selects among them (the num
+  // root nearest 1/conj(z₀_hint)). h = finite poles a_j + polyPart, NO origin term
+  // (0∈Ω ⇒ w=0 is not a legal pole site). Returns
+  //   { hData:{poles, polyPart}, poleData, c, alpha, z0, phi, univalent, warnings }.
+  function unboundedPowerQDSingular(rHash, alpha, options) {
+    options = options || {};
+    const label = 'Direct.unboundedPowerQDSingular';
+    if (!(alpha > 0) || Math.abs(alpha - 1) < 1e-12) throw new Error(label + ': need α > 0, α ≠ 1.');
+    const { num, den } = parseKernelExterior(rHash, options.validateTol || 1e-6, true, label);
+    if (num.length <= 1)
+      throw new Error(label + ': r# must have a zero inside 𝔻 (non-constant numerator) to place the origin-preimage z₀.');
+    const { rInf, polyA, geom } = splitUnboundedKernel(num, den, label);
+    const r0Const = unboundedR0Const(rInf, geom);             // = |c·z₀|^α
+    if (Math.abs(r0Const.im) > 1e-6 || r0Const.re <= 0)
+      throw new Error(label + ': r#(∞)−Σbranch(∞) must be real positive (= |c·z₀|^α). Got ' + complexFmt(r0Const) + '.');
+
+    // z₀ = 1/conj(ρ), ρ a zero of r# inside 𝔻 (root of num). Order candidates by
+    // proximity to 1/conj(z₀_hint) when a hint is given.
+    const inv = (p) => C.scale(C.conj(p), 1 / C.abs2(p));     // 1/conj(p) = p/|p|²
+    let roots = polynomialRoots(num).filter(r => C.abs(r) < 1 - 1e-9);
+    if (roots.length === 0) throw new Error(label + ': r# has no zero strictly inside 𝔻; cannot place z₀.');
+    if (options.z0) { const tgt = inv(options.z0); roots = roots.slice().sort((p, q) => C.abs(C.sub(p, tgt)) - C.abs(C.sub(q, tgt))); }
+
+    const fam = QD.Family.unboundedPQD_singular;
+    let chosen = null, lastWarn = '';
+    for (const rho of roots) {
+      const z0 = inv(rho);                                    // |z₀| > 1
+      const c = Math.pow(r0Const.re, 1 / alpha) / C.abs(z0);  // r0Const = |c·z₀|^α
+      const phi = { family: 'unboundedPQD_singular', unbounded: true, alpha, c, z0,
+                    polyA, branches: geom.map(g => ({ z: g.zj, A: g.A })) };
+      let univalent = false;
+      try { univalent = QD.isBoundaryUnivalent(phi); } catch (e) { univalent = false; }
+      if (!univalent) { lastWarn = 'φ not univalent'; continue; }
+      let originIn = false;
+      try { originIn = QD.originInsideOmega(phi); } catch (e) { originIn = false; }
+      if (!originIn) { lastWarn = '0 ∉ Ω for this z₀'; continue; }
+      chosen = { phi, c, z0 }; break;
+    }
+    if (!chosen) {
+      return { hData: { poles: [], polyPart: [] }, poleData: [], alpha, univalent: false,
+               warnings: ['Not realizable: no zero of r# yields a univalent singular φ with 0∈Ω (' + lastWarn + ').'] };
+    }
+    const { phi, c, z0 } = chosen;
+
+    // Finite poles via (★)_A inversion; polyPart via (★)_F inversion. No origin term.
+    const poles = geom.map(g => ({ a: fam.evalPhi(g.zj, phi), m: g.m, A: g.A }));
+    const Cs = solveResiduesViaProbe(fam, phi, poles);
+    const hPoles = poles.map((p, j) => ({ a: p.a, principal: Cs[j] }));
+    const poleData = geom.map((g, j) => ({ z: g.zj, w: poles[j].a, multiplicity: g.m }));
+    const polyPart = forwardPolyPartAtInfinity(fam, phi, polyA.length - 1);
+
+    return { hData: { poles: hPoles, polyPart }, poleData, c, alpha, z0, phi, univalent: true, warnings: [] };
+  }
+
+  // ---------------------------------------------------------------------------
+  // UNBOUNDED LOG-weighted forward kernels. φ = c·z·exp(r̃# + B(1/z)) (non-sing) /
+  // c·|z₀|·z·b_{z₀}·exp(r̃#) (sing), r̃# = r# − r#(∞) (gauge ∞-absorption). The
+  // input EXPONENT kernel is rational with poles INSIDE 𝔻: a pole at z=0 (order
+  // N_β) is the polynomial-h block B(1/z)=Σ β_l/z^l; poles ζ_p≠0 are the r#
+  // branches. c (= φ'(∞)) is a free real-positive input (NOT derived). Finite
+  // poles come from inverting (★)_A (computeTargets.A) by probe; the poly-h
+  // block, when present, from the coupled (★)_F linear system (β = target_F(P̃),
+  // P̃ = [Σ C_{j,1}, polyPart…]). NB the LQD-SINGULAR family carries an ORIGIN
+  // pole q/w (the author's q-formula; unlike the PQD-singular family which has
+  // none) — returned separately as `q`.
+  // ---------------------------------------------------------------------------
+
+  // Dense complex linear solve M·x = b (Gaussian elimination, partial pivot).
+  // n small (poly-h degree); used for the LQD coupled (★)_F block.
+  function solveComplexLinear(M, b, n) {
+    const A = M.map(row => row.map(c => C.clone(c)));
+    const x = b.map(c => C.clone(c));
+    for (let col = 0; col < n; col++) {
+      let piv = col, best = C.abs(A[col][col]);
+      for (let r = col + 1; r < n; r++) { const v = C.abs(A[r][col]); if (v > best) { best = v; piv = r; } }
+      if (best < 1e-300) throw new Error('solveComplexLinear: singular system');
+      if (piv !== col) { const tr = A[col]; A[col] = A[piv]; A[piv] = tr; const tx = x[col]; x[col] = x[piv]; x[piv] = tx; }
+      const d = A[col][col];
+      for (let r = col + 1; r < n; r++) {
+        const f = C.div(A[r][col], d);
+        for (let cc = col; cc < n; cc++) A[r][cc] = C.sub(A[r][cc], C.mul(f, A[col][cc]));
+        x[r] = C.sub(x[r], C.mul(f, x[col]));
+      }
+    }
+    const out = new Array(n);
+    for (let i = n - 1; i >= 0; i--) {
+      let acc = C.clone(x[i]);
+      for (let j = i + 1; j < n; j++) acc = C.sub(acc, C.mul(A[i][j], out[j]));
+      out[i] = C.div(acc, A[i][i]);
+    }
+    return out;
+  }
+
+  // Solve h's polyPart (length N) from the LQD (★)_F block, given the known β
+  // (phi.lqdBeta) and the finite poles (hPoles, whose Σ C_{j,1} feeds P̃[0]).
+  // β = target_F(P̃) is linear in polyPart; probe + dense solve.
+  function forwardBetaToPolyPart(fam, phi, hPoles, N) {
+    if (N <= 0) return [];
+    const zeroPP = Array.from({ length: N }, () => ({ re: 0, im: 0 }));
+    const base = fam.computeTargets(phi, { poles: hPoles, polyPart: zeroPP }).F;   // target_F at polyPart=0
+    const cols = [];
+    for (let m = 0; m < N; m++) {
+      const e = zeroPP.map((_, i) => ({ re: i === m ? 1 : 0, im: 0 }));
+      const fm = fam.computeTargets(phi, { poles: hPoles, polyPart: e }).F;
+      cols.push(fm.map((v, i) => C.sub(v, base[i])));                              // ∂ target_F / ∂ polyPart[m]
+    }
+    const rows = [];
+    for (let i = 0; i < N; i++) rows.push(cols.map(col => col[i]));
+    const rhs = phi.lqdBeta.map((b, i) => C.sub(b, base[i]));
+    return solveComplexLinear(rows, rhs, N);
+  }
+
+  // Shared front-end for the unbounded LQD kernels: parse the exponent kernel
+  // (poles inside 𝔻), split into β (pole at 0) + branches (poles ζ_p ≠ 0).
+  // Returns { num, den, lqdBeta, geom } (geom: [{zeta, zj, m, A}]).
+  function splitUnboundedLogKernel(rHash, validateTol, label) {
+    const { num, den } = parseKernelExterior(rHash, validateTol, false, label);
+    const groups = den.length > 1 ? groupRootsByMultiplicity(polynomialRoots(den), 1e-7) : [];
+    let lqdBeta = [];
+    const geom = [];
+    for (const g of groups) {
+      const zeta = g.root, m = g.multiplicity;
+      if (C.abs(zeta) < 1e-7) { lqdBeta = localPrincipalResidues(num, den, { re: 0, im: 0 }, m); continue; }
+      const m2 = zeta.re * zeta.re + zeta.im * zeta.im;
+      const zj = { re: zeta.re / m2, im: -zeta.im / m2 };
+      const A = branchCoeffsFromResidues(localPrincipalResidues(num, den, zeta, m), zeta, m);
+      geom.push({ zeta, zj, m, A });
+    }
+    return { num, den, lqdBeta, geom };
+  }
+
+  // unboundedLogQD: rational exponent r#(z) + c → hData (unbounded log-weighted
+  // QD, 0∉Ω, ∞∈Ω). φ = c·z·exp(r̃# + B(1/z)). Returns
+  //   { hData:{poles, polyPart}, poleData, c, phi, univalent, warnings }.
+  function unboundedLogQD(rHash, c, options) {
+    options = options || {};
+    const label = 'Direct.unboundedLogQD';
+    if (!(c > 0)) throw new Error(label + ": c (= φ'(∞)) must be a positive real.");
+    const { lqdBeta, geom } = splitUnboundedLogKernel(rHash, options.validateTol || 1e-6, label);
+
+    const phi = { family: 'unboundedLQD', unbounded: true, c, lqdBeta, branches: geom.map(g => ({ z: g.zj, A: g.A })) };
+    const fam = QD.Family.unboundedLQD;
+
+    let univalent = false;
+    try { univalent = QD.isBoundaryUnivalent(phi); } catch (e) { univalent = false; }
+    if (!univalent) {
+      return { hData: { poles: [], polyPart: [] }, poleData: [], c, phi, univalent: false,
+               warnings: ['Not realizable: φ = c·z·exp(r#) is not univalent (boundary self-intersects). Adjust r# or c.'] };
+    }
+    if (QD.originInsideOmega(phi)) {
+      return { hData: { poles: [], polyPart: [] }, poleData: [], c, phi, univalent: true, originInside: true,
+               warnings: ['0 ∈ Ω for this r#: the domain is SINGULAR. Use unboundedLogQDSingular.'] };
+    }
+
+    const poles = geom.map(g => ({ a: fam.evalPhi(g.zj, phi), m: g.m, A: g.A }));
+    const Cs = solveResiduesViaProbe(fam, phi, poles);
+    const hPoles = poles.map((p, j) => ({ a: p.a, principal: Cs[j] }));
+    const poleData = geom.map((g, j) => ({ z: g.zj, w: poles[j].a, multiplicity: g.m }));
+    const polyPart = forwardBetaToPolyPart(fam, phi, hPoles, lqdBeta.length);
+
+    return { hData: { poles: hPoles, polyPart }, poleData, c, phi, univalent: true, warnings: [] };
+  }
+
+  // unboundedLogQDSingular: rational exponent r#(z) + c + z₀ → hData (unbounded
+  // SINGULAR LQD, 0∈Ω, ∞∈Ω). φ = c·|z₀|·z·b_{z₀}·exp(r̃# + B(1/z)). UNLIKE the
+  // PQD-singular family, h carries an ORIGIN pole q/w with (author's q-formula)
+  //   q = ln(c²|z₀|²) + r̃#(z₀) + conj(r̃#(1/conj z₀)) + B(1/z₀) + conj(B(conj z₀)),
+  // returned separately (the inverse solver takes it via opts.q). z₀ ∈ 𝔻* is a
+  // FREE input here (the q-equation absorbs the origin consistency, as in the
+  // bounded LQD-singular case). Returns
+  //   { hData:{poles, polyPart}, poleData, c, z0, q, phi, univalent, warnings }.
+  function unboundedLogQDSingular(rHash, c, z0, options) {
+    options = options || {};
+    const label = 'Direct.unboundedLogQDSingular';
+    if (!(c > 0)) throw new Error(label + ": c (= φ'(∞)) must be a positive real.");
+    if (!z0 || C.abs(z0) <= 1 + 1e-9) throw new Error(label + ': z₀ must be exterior (|z₀| > 1) — the origin-preimage in 𝔻*.');
+    const { lqdBeta, geom } = splitUnboundedLogKernel(rHash, options.validateTol || 1e-6, label);
+
+    const phi = { family: 'unboundedLQD_singular', unbounded: true, c, z0: C.clone(z0), lqdBeta,
+                  branches: geom.map(g => ({ z: g.zj, A: g.A })) };
+    const fam = QD.Family.unboundedLQD_singular;
+
+    let univalent = false;
+    try { univalent = QD.isBoundaryUnivalent(phi); } catch (e) { univalent = false; }
+    if (!univalent) {
+      return { hData: { poles: [], polyPart: [] }, poleData: [], c, z0: C.clone(z0), phi, univalent: false,
+               warnings: ['Not realizable: φ = c·|z₀|·z·b_{z₀}·exp(r#) is not univalent. Adjust r#, c, or z₀.'] };
+    }
+
+    const poles = geom.map(g => ({ a: fam.evalPhi(g.zj, phi), m: g.m, A: g.A }));
+    const Cs = solveResiduesViaProbe(fam, phi, poles);
+    const hPoles = poles.map((p, j) => ({ a: p.a, principal: Cs[j] }));
+    const poleData = geom.map((g, j) => ({ z: g.zj, w: poles[j].a, multiplicity: g.m }));
+    const polyPart = forwardBetaToPolyPart(fam, phi, hPoles, lqdBeta.length);
+
+    // Origin residue q (the (●₀) q-equation; author's full formula):
+    //   q = ln(c²|z₀|²) + R(z₀) + conj(R(1/conj z₀)),   R(z) = r̃#(z) + B(1/z),
+    //   r̃# = r# − r#(∞). Note R(1/conj z₀) = r̃#(1/conj z₀) + B(conj z₀), and
+    //   B(conj z₀) = B(1/z)|_{z = 1/conj z₀} (since B is a function of 1/z).
+    const rInf = QD.LqdCommon.rHashAtInfinity(phi);
+    const Bz = (z) => QD.LqdCommon.evalB_OverZ(phi, z);                  // B(1/z)
+    const Rfull = (z) => C.add(C.sub(QD.LqdCommon.evalRHash(z, phi), rInf), Bz(z));
+    const oneOverConjZ0 = C.scale(z0, 1 / C.abs2(z0));                   // 1/conj(z₀) = z₀/|z₀|²
+    const q = C.add(C.add({ re: Math.log(c * c * C.abs2(z0)), im: 0 }, Rfull(z0)),
+                    C.conj(Rfull(oneOverConjZ0)));
+    phi.q = q;
+
+    return { hData: { poles: hPoles, polyPart }, poleData, c, z0: C.clone(z0), q, phi, univalent: true, warnings: [] };
+  }
+
   // ---------------------------------------------------------------------------
   // Polynomial helpers (in ascending-power Complex[] form).
   // ---------------------------------------------------------------------------
@@ -1208,7 +2064,6 @@
   // Repeated synthetic-division: dividing by (z − z_0) repeatedly produces
   // successive remainders that are exactly the Taylor coefficients at z_0.
   function polyTaylorAt(p, z0, L) {
-    const n = p.length - 1;
     const out = new Array(L + 1);
     let work = p.slice();                              // mutable copy
     for (let k = 0; k <= L; k++) {
@@ -1307,6 +2162,14 @@
   }
 
   Direct.boundedQDRational  = boundedQDRational;
+  Direct.boundedPowerQD     = boundedPowerQD;
+  Direct.boundedLogQD       = boundedLogQD;
+  Direct.boundedPowerQDSingular = boundedPowerQDSingular;
+  Direct.boundedLogQDSingular   = boundedLogQDSingular;
+  Direct.unboundedPowerQD       = unboundedPowerQD;
+  Direct.unboundedPowerQDSingular = unboundedPowerQDSingular;
+  Direct.unboundedLogQD         = unboundedLogQD;
+  Direct.unboundedLogQDSingular = unboundedLogQDSingular;
   Direct.forwardLocalPrincipal = forwardLocalPrincipal;
   Direct.reverseConjugate   = reverseConjugate;
   Direct.shiftPolynomialUp  = shiftPolynomialUp;

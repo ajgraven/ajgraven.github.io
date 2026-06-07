@@ -239,73 +239,14 @@
   //
   // This is a "good enough" first cut. If it fails, the multistart / diverse
   // phases of solveInverseQD pick up the slack.
-  function initialGuess_LQD(hData, norm) {
-    const w0 = norm.w0;
-    const n = hData.poles.length;
-
-    // Guess a "radius" of Ω: R such that |ln(a_j/w₀)| ~ R for all j.
-    // (For a one-point LQD with charge α, R ~ √α.)
-    let totalLog = 0;
-    for (const p of hData.poles) {
-      // ln(a_j/w₀) — principal branch.
-      const ratio = Complex.div(p.a, w0);
-      const mag = Math.hypot(Math.log(Complex.abs(ratio)), Math.atan2(ratio.im, ratio.re));
-      if (mag > totalLog) totalLog = mag;
-    }
-    const R = Math.max(totalLog, 0.3);              // floor to keep z_j inside 𝔻
-    const cap = 0.85;                               // keep |z_j| safely < 1
-
-    const phi = { family: 'boundedLQD', w0: Complex.clone(w0), branches: [] };
-
-    for (let j = 0; j < n; j++) {
-      const p = hData.poles[j];
-      const logRatio = {
-        re: Math.log(Complex.abs(Complex.div(p.a, w0))),
-        im: Math.atan2(p.a.im * w0.re - p.a.re * w0.im,
-                       p.a.re * w0.re + p.a.im * w0.im),
-      };
-      // z_j ≈ logRatio / R, capped at cap to stay in 𝔻
-      let z = Complex.scale(logRatio, 1 / R);
-      const zr = Complex.abs(z);
-      if (zr > cap) z = Complex.scale(z, cap / zr);
-
-      // A_{j,k}: scale C_{j,k} by a factor that makes the (★) targets self-
-      // consistent for a near-disk. For a disk of "radius" R, ψ̃(t) ≈ t/R,
-      // so [t^s] ψ̃^k = R^{-k} δ_{sk}, and A_{j,k} ≈ D_{j,k} · R^{-k}.
-      const A = [];
-      const D = (() => {
-        const out = new Array(p.principal.length);
-        for (let s = 0; s < p.principal.length; s++) {
-          const aC = Complex.mul(p.a, p.principal[s]);
-          const next = (s + 1 < p.principal.length) ? p.principal[s + 1] : { re: 0, im: 0 };
-          out[s] = Complex.add(aC, next);
-        }
-        return out;
-      })();
-      let Rk = 1;
-      for (let k = 1; k <= p.principal.length; k++) {
-        Rk *= R;
-        A.push(Complex.scale(D[k - 1], 1 / Rk));
-      }
-      phi.branches.push({ z, A });
-    }
-
-    return phi;
+  // Seed strategy extracted to solvers/seeds/seeds-lqd.js (B3). Aliased locally
+  // so the Family entry + any internal callers keep their names.
+  if (!QD.Seeds || !QD.Seeds.boundedLQD) {
+    throw new Error("solver-lqd.js: QD.Seeds.boundedLQD missing — seeds-lqd.js must be loaded first");
   }
-
-  function perturbedInitialGuess_LQD(hData, norm, rng, r) {
-    const base = initialGuess_LQD(hData, norm);
-    QD.LqdCommon.perturbBranchesInPlace(base.branches, rng, r || 0);
-    return base;
-  }
-
-  function diverseInitialGuess_LQD(hData, norm, rng, r) {
-    return {
-      family: 'boundedLQD',
-      w0: Complex.clone(norm.w0),
-      branches: QD.LqdCommon.diverseSeedBranches(hData, rng),
-    };
-  }
+  const initialGuess_LQD          = QD.Seeds.boundedLQD.initialGuess;
+  const perturbedInitialGuess_LQD = QD.Seeds.boundedLQD.perturbedInitialGuess;
+  const diverseInitialGuess_LQD   = QD.Seeds.boundedLQD.diverseInitialGuess;
 
   // No continuation strategy in the first cut — exp-of-QD bootstrap + the
   // shared multistart / diverse / deflation pipeline handle everything.
@@ -413,9 +354,7 @@
             const s = sIdx + 1;
             const C = pole.principal[sIdx];
             const sign = (s % 2 === 0) ? -1 : 1;          // (-1)^{s-1}
-            const coef = QD.binomialCoeff
-              ? QD.binomialCoeff(k + s - 2, s - 1)
-              : binom(k + s - 2, s - 1);
+            const coef = QD.binomialCoeff(k + s - 2, s - 1);
             const denom = Complex.pow(aMinusB, k + s - 1);
             const term = Complex.div(C, denom);
             rhs = Complex.add(rhs, Complex.scale(term, sign * coef));
@@ -442,15 +381,6 @@
       numSamples: N,
       lqd: true,
     };
-  }
-
-  // Local fallback for the binomial coefficient (in case QD.binomialCoeff
-  // isn't exported — it's an internal helper in solver.js).
-  function binom(n, k) {
-    if (k < 0 || k > n) return 0;
-    let r = 1;
-    for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1);
-    return r;
   }
 
   // ===========================================================================

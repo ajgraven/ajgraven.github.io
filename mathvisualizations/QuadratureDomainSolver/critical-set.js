@@ -120,7 +120,6 @@
       return { ok: false, reason: 'flat-derivative', f, f2 };
     }
     // step = f / (2·f2)
-    const denom = 2 * dpAbs2;
     // Complex division (a + bi)/(c + di) = (ac + bd + i(bc − ad)) / (c²+d²)
     // Here numerator is f, denominator is 2·f2 = (2 f2.re) + i (2 f2.im).
     const cr = 2 * f2.re, ci = 2 * f2.im;

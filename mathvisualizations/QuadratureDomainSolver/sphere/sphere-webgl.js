@@ -123,6 +123,12 @@ void main() { fragColor = u_color; }`;
     catch (e) { gl = null; }
     if (!gl) return null;
 
+    // WebGL context-loss handling. preventDefault() is REQUIRED for the browser
+    // to fire 'webglcontextrestored'. After a loss the program / FBO / textures
+    // are all invalid; render() bails on isContextLost() and the owner
+    // (sphere-ui) recreates the renderer on restore rather than rebuilding here.
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); }, false);
+
     // Pull shared helpers from schwarz-webgl.js (must be loaded first).
     const SW = QD.Schwarz;
     if (!SW || !SW._shaders || !SW._glHelpers || !SW._gpuCaps) {
@@ -307,6 +313,11 @@ void main() { fragColor = u_color; }`;
       for (let j = 0; j < nb; j++) {
         if (effBranches[j].A.length > MAX_K) return false;
       }
+      // Family.powerQD: GPU shader for (R#)^{1/α} not yet implemented (Q3
+      // follow-up). Refuse capacity so the sphere view falls back / stays
+      // empty until the shader gains principal-αth-root arithmetic.
+      if (phi.family === 'powerQD' || phi.family === 'powerQD_singular'
+          || phi.family === 'unboundedPQD' || phi.family === 'unboundedPQD_singular') return false;
 
       // Pack phi state.
       phiState.unbounded = !!phi.unbounded;
@@ -434,6 +445,7 @@ void main() { fragColor = u_color; }`;
     // camera = { azimuth, elevation, distance }  (azimuth/elevation in radians)
     // size   = { W, H }  in physical pixels (canvas.width / canvas.height)
     function render(camera, size) {
+      if (gl.isContextLost()) return;     // dead context — owner recreates on restore
       const W = size ? size.W : canvas.clientWidth;
       const H = size ? size.H : canvas.clientHeight;
       if (canvas.width !== W || canvas.height !== H) {
@@ -631,26 +643,14 @@ void main() { fragColor = u_color; }`;
 
       // --- Pole markers (star shape ✸ on the sphere surface) ---
       const markVerts = [];
-      const STAR_SIZE  = 0.03;   // arm length (world units)
-      const STAR_N_POL = 3;      // North-pole star
-      const STAR_N_POL_SIZE = 0.05;
+      const STAR_N_POL = 3;          // north-pole star: number of arms
+      const STAR_N_POL_SIZE = 0.05;  // arm radius (world units)
 
-      // Finite poles from phi.branches (the a_j = φ(z_j) values).
-      // Project z_j → a_j using evalPhi if available; otherwise use the
-      // pole positions from the Schwarz handle (hData poles).
-      // Simplest: draw stars at the quadrature nodes (a_j values from phi.branches)
-      // projected to sphere. These are in w-space; project w → sphere.
-      // Note: phi.branches store the z_j (preimage in 𝔻), not the a_j (pole in w-space).
-      // The a_j lives in hData. We receive phi but not hData here.
-      // Fallback: project the boundary centroid — no, that's wrong.
-      // Instead, use the quadrature data's pole positions stored in the
-      // phi object (if available). Classical QDs store poles in the inverse-Faber
-      // form; for the overlay we just mark the center of the boundary polygon
-      // as an approximation. The proper approach is to accept poles as a param.
-      // See the sphereState.polesSnapshot stored in sphere-ui.js.
-      // For now we'll accept poles via a separate setPolePts() call from sphere-ui.js.
-
-      // North-pole marker (always, if poles are shown).
+      // Finite-pole markers are NOT built here: phi alone doesn't carry the a_j
+      // (the poles live in w-space, in hData, which this function doesn't
+      // receive). sphere-ui.js passes them in via setPolePts() → the marker VBO
+      // is rebuilt by _rebuildMarkVerts(). Here we draw only the always-on
+      // north-pole star.
       const npStar = _buildStar([0, 0, 1], STAR_N_POL_SIZE, STAR_N_POL);
       markVerts.push(...npStar);
 
@@ -672,18 +672,8 @@ void main() { fragColor = u_color; }`;
     // positions in w-space so we can draw markers at the correct locations.
     function setPolePts(poles) {
       if (!poles || !poles.length) return;
-      const STAR_SIZE  = 0.03;
-      const STAR_N_ARM = 3;
-      const STAR_N_POL_SIZE = 0.05;
-
-      // Re-fetch existing boundary geometry from VBO isn't practical.
-      // We'll store an "extra mark verts" array and re-upload the whole thing.
-      // This requires knowing the current boundary verts too.
-      // Simpler: call _buildOverlayGeometry_withPoles — but we'd need to store
-      // boundaryPts. Add a stateful cache.
-      // For now, build pole mark geometry and append to existing ovVBO.
-      // Since this is called once per capture, just rebuild entirely.
-      // Store the pole positions for the next rebuild.
+      // Store the w-space pole positions and rebuild the marker VBO. Called
+      // once per capture, so a full rebuild (vs. an incremental append) is fine.
       _storedPolePts = poles;
       _rebuildMarkVerts();
     }
@@ -764,6 +754,22 @@ void main() { fragColor = u_color; }`;
     }
 
     // =========================================================================
+    // suspend — free the largest GPU resource (the fractal FBO, texSize²
+    // RGBA8, up to 2048²) while the sphere view is hidden, without tearing
+    // down the GL context or shader programs (A8-sphere). render() rebuilds the
+    // FBO lazily on the next paint (it recreates when fractalFBO is null and a
+    // φ is present); with no φ the default 2×2 placeholder texture is used.
+    // =========================================================================
+    function suspend() {
+      if (fractalFBO) {
+        gl.deleteFramebuffer(fractalFBO.fbo);
+        gl.deleteTexture(fractalFBO.tex);
+        fractalFBO = null;
+      }
+      fractalDirty = true;
+    }
+
+    // =========================================================================
     // destroy
     // =========================================================================
     function destroy() {
@@ -796,6 +802,7 @@ void main() { fragColor = u_color; }`;
       setRenderParams,
       setDisplayParams,
       render,
+      suspend,
       destroy,
       markFractalDirty() { fractalDirty = true; },
     };

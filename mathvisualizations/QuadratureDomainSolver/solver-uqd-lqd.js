@@ -277,81 +277,15 @@
   // (Theorem 5.4.2). At small c the preimages have |z_j| ≫ 1 (well outside
   // 𝔻̄), making this an excellent warm-start; for larger c, Newton walks
   // the solution via continuation in c.
-  function initialGuess_UQDL(hData, norm) {
-    const c = norm.c;
-    // Choose an effective c for the initial guess such that all |z_j| ≥ 1.05;
-    // continuation walks it to the target.
-    let minA = Infinity;
-    for (const p of hData.poles) {
-      const m = Complex.abs(p.a);
-      if (m > 0 && m < minA) minA = m;
-    }
-    const cap = isFinite(minA) && minA > 0 ? 0.5 * minA : Math.min(1, c);
-    const effC = Math.min(c, cap);
-
-    const branches = hData.poles.map(p => {
-      let z;
-      if (Complex.abs2(p.a) < 1e-30) {
-        // Non-singular guarantees 0 ∉ Ω̄, so a_j ≠ 0; this is a safety net.
-        z = { re: 2, im: 0 };
-      } else {
-        z = Complex.scale(p.a, 1 / effC);
-        const r = Complex.abs(z);
-        if (r < 1.05) z = Complex.scale(z, 1.05 / Math.max(r, 1e-15));
-      }
-      const A = [];
-      let cPow = 1;
-      for (let k = 1; k <= p.principal.length; k++) {
-        cPow *= effC;
-        const Cjk     = p.principal[k - 1];
-        const Cjknext = (k < p.principal.length) ? p.principal[k] : { re: 0, im: 0 };
-        const Djk     = Complex.add(Complex.mul(p.a, Cjk), Cjknext);
-        A.push(Complex.scale(Djk, 1 / cPow));
-      }
-      return { z, A };
-    });
-
-    // Seed lqdBeta from polyPart by evaluating computeTargetF at this initial
-    // φ with β = [0, ..., 0]. In the trivial r# ≈ 0, β ≈ 0 limit this reduces
-    // to β_l ≈ c^l · conj(polyPart[l-1]); using the full target instead is
-    // marginally more accurate (the existing z_j ≠ 0 contributes via
-    // rHashLaurentAtInfinity) and reuses the same code path.
-    const polyPart = hData.polyPart || [];
-    const phiInit = {
-      family: 'unboundedLQD',
-      unbounded: true,
-      c, w0: undefined,
-      branches,
-      lqdBeta: polyPart.map(() => ({ re: 0, im: 0 })),
-    };
-    if (polyPart.length > 0) {
-      const targetF = computeTargetF_UQDL(phiInit, hData);
-      phiInit.lqdBeta = targetF.map(c => ({ re: c.re, im: c.im }));
-    }
-    return phiInit;
+  // Seed strategy extracted to solvers/seeds/seeds-uqd-lqd.js (B3). Aliased
+  // locally so the continuation loop + Family entry keep their names. The
+  // β-seed step there calls QD.computeTargetF_UQDL (exported below).
+  if (!QD.Seeds || !QD.Seeds.unboundedLQD) {
+    throw new Error("solver-uqd-lqd.js: QD.Seeds.unboundedLQD missing — seeds-uqd-lqd.js must be loaded first");
   }
-
-  function perturbedInitialGuess_UQDL(hData, norm, rng, r) {
-    const base = initialGuess_UQDL(hData, norm);
-    QD.LqdCommon.perturbBranchesInPlace(base.branches, rng, r || 0,
-      { side: 'out', zCap: 1.05, zScale: 1.10 });
-    return base;
-  }
-
-  function diverseInitialGuess_UQDL(hData, norm, rng, r) {
-    const polyPart = hData.polyPart || [];
-    const base = {
-      family: 'unboundedLQD',
-      unbounded: true,
-      c: norm.c, w0: undefined,
-      branches: QD.LqdCommon.diverseSeedBranches(hData, rng, { zMin: 1.05, zMax: 30 }),
-      lqdBeta: polyPart.map(() => ({ re: 0, im: 0 })),
-    };
-    if (polyPart.length > 0) {
-      base.lqdBeta = computeTargetF_UQDL(base, hData).map(c => ({ re: c.re, im: c.im }));
-    }
-    return base;
-  }
+  const initialGuess_UQDL          = QD.Seeds.unboundedLQD.initialGuess;
+  const perturbedInitialGuess_UQDL = QD.Seeds.unboundedLQD.perturbedInitialGuess;
+  const diverseInitialGuess_UQDL   = QD.Seeds.unboundedLQD.diverseInitialGuess;
 
   // ===========================================================================
   // 8. Continuation in c
@@ -539,5 +473,8 @@
     verifyQuadratureIdentity: verifyQuadratureIdentity_UQDL,
   };
   QD.registerFamily('unboundedLQD');
+
+  // Exported so seeds-uqd-lqd.js can seed lqdBeta from the ∞-pole target (B3).
+  QD.computeTargetF_UQDL = computeTargetF_UQDL;
 
 })();

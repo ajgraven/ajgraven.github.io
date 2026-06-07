@@ -29,6 +29,17 @@
     throw new Error("solver-uqd.js: solver.js must be loaded first");
   }
 
+  // Near-cusp identity-escalation thresholds (#11). The escalation in
+  // verifyQuadratureIdentity_UQD fires only when ALL hold: the boundary-speed dip
+  // min|φ′|/mean|φ′| < CUSP_RATIO_GATE (a φ′ zero is nearing |z|=1); the error is
+  // FINITE and above IDENTITY_ESCALATE_TOL (so the QD would otherwise be wrongly
+  // rejected — no point sharpening an already-passing check); and test points
+  // exist (an empty/thin hole is the geometry-gated regime where more nodes can't
+  // help). This keeps the common multistart candidates at a single pass — critical,
+  // since the verifier is called once PER candidate during a solve.
+  const CUSP_RATIO_GATE      = 0.08;
+  const IDENTITY_ESCALATE_TOL = 1e-6;
+
   // ===========================================================================
   // 1. φ evaluation
   // ===========================================================================
@@ -258,73 +269,14 @@
   function canonicalizePhi_UQD(phi) { return phi; }
 
   // ===========================================================================
-  // 6. Initial guesses
+  // 6. Initial guesses — extracted to solvers/seeds/seeds-uqd.js (B3). Aliased
+  // locally so the continuation-in-c loop + Family entry keep their names.
   // ===========================================================================
-  function unboundedInitialGuess_UQD(hData, cUser) {
-    let minA = Infinity;
-    for (const p of hData.poles) {
-      const m = Complex.abs(p.a);
-      if (m < minA) minA = m;
-    }
-    const cap = isFinite(minA) && minA > 0 ? 0.5 * minA : Math.min(1, cUser);
-    const effC = Math.min(cUser, cap);
-    const phi = {
-      unbounded: true, c: cUser, w0: undefined, polyA: [], branches: [],
-    };
-    for (const p of hData.poles) {
-      let z;
-      if (Complex.abs2(p.a) < 1e-30) {
-        z = { re: 2, im: 0 };
-      } else {
-        z = Complex.scale(p.a, 1 / effC);
-      }
-      const A = [];
-      let cPow = 1;
-      for (let k = 1; k <= p.principal.length; k++) {
-        cPow *= effC;
-        A.push(Complex.scale(p.principal[k - 1], 1 / cPow));
-      }
-      phi.branches.push({ z, A });
-    }
-    if (hData.polyPart && hData.polyPart.length > 0) {
-      let cPowL = 1;
-      for (let l = 0; l < hData.polyPart.length; l++) {
-        if (l > 0) cPowL *= cUser;
-        phi.polyA.push(Complex.scale(hData.polyPart[l], cPowL));
-      }
-    }
-    return phi;
+  if (!QD.Seeds || !QD.Seeds.unboundedQD) {
+    throw new Error("solver-uqd.js: QD.Seeds.unboundedQD missing — seeds-uqd.js must be loaded first");
   }
-
-  function perturbedUnboundedInitialGuess_UQD(hData, c, rng, r = 0) {
-    const base = unboundedInitialGuess_UQD(hData, c);
-    const sigma = 0.15 + 0.25 * r;
-    for (const br of base.branches) {
-      br.z = {
-        re: br.z.re + sigma * (rng() - 0.5),
-        im: br.z.im + sigma * (rng() - 0.5)
-      };
-      const rr = Math.hypot(br.z.re, br.z.im);
-      if (rr < 1.05) {
-        const scale = 1.05 / Math.max(rr, 1e-9);
-        br.z.re *= scale; br.z.im *= scale;
-      }
-      for (let k = 0; k < br.A.length; k++) {
-        br.A[k] = {
-          re: br.A[k].re * (1 + sigma * (rng() - 0.5)),
-          im: br.A[k].im + sigma * (rng() - 0.5)
-        };
-      }
-    }
-    for (let l = 0; l < base.polyA.length; l++) {
-      base.polyA[l] = {
-        re: base.polyA[l].re * (1 + sigma * (rng() - 0.5))
-              + (Math.abs(base.polyA[l].re) < 1e-9 ? sigma * (rng() - 0.5) : 0),
-        im: base.polyA[l].im + sigma * (rng() - 0.5),
-      };
-    }
-    return base;
-  }
+  const unboundedInitialGuess_UQD          = QD.Seeds.unboundedQD.initialGuess;
+  const perturbedUnboundedInitialGuess_UQD = QD.Seeds.unboundedQD.perturbedInitialGuess;
 
   // ===========================================================================
   // 7. Continuation in c
@@ -417,33 +369,22 @@
   // 8. Identity verifier — test functions f(w) = 1/(w − b)^k for b ∈ K
   // ===========================================================================
   function verifyQuadratureIdentity_UQD(phi, hData, options = {}) {
-    const N             = options.numSamples ?? 500;
+    // Floor the contour-integral resolution: the identity integrand 1/(w−b)^k is
+    // sharply peaked (acutely so for high-order / origin poles), and a uniform
+    // 500-node sweep grossly under-resolves it as the gauge c grows — a genuine QD
+    // then reads identity-failing and the c* estimate is cut short. ≥1500 nodes
+    // (the singular siblings use ≥2000) restore machine-precision accuracy where
+    // the test points are well clear of ∂Ω.
+    const baseN         = Math.max(options.numSamples ?? 0, 1500);
     const maxOrder      = options.maxDegree ?? 3;
     const numTestPoints = options.numTestPoints ?? 3;
-
-    const samples = new Array(N);
-    for (let n = 0; n < N; n++) {
-      const theta = 2 * Math.PI * n / N;
-      const z = { re: Math.cos(theta), im: Math.sin(theta) };
-      const taylor = phiTaylorAt_UQD(z, phi, 1);
-      samples[n] = { z, w: taylor[0], phiPrime: taylor[1] };
-    }
-
-    let cx = 0, cy = 0;
-    for (const s of samples) { cx += s.w.re; cy += s.w.im; }
-    cx /= N; cy /= N;
-    const centroid = { re: cx, im: cy };
-    let maxDev = 0;
-    for (const s of samples) {
-      const d = Math.hypot(s.w.re - cx, s.w.im - cy);
-      if (d > maxDev) maxDev = d;
-    }
-    const testPoints = [centroid];
-    for (let i = 1; i < numTestPoints; i++) {
-      const ang = 2 * Math.PI * (i - 1) / Math.max(numTestPoints - 1, 1);
-      const r = 0.18 * maxDev;
-      testPoints.push({ re: cx + r * Math.cos(ang), im: cy + r * Math.sin(ang) });
-    }
+    // Near-cusp accuracy (#11): the integrand stays smooth and periodic, so the
+    // uniform trapezoid is spectrally accurate — grading nodes only hurts it. The
+    // genuine failure is that as a φ′ zero nears |z|=1 the integrand SHARPENS, so
+    // a fixed node count under-resolves and a real QD reads identity-failing. The
+    // fix is to ESCALATE the (uniform) node count until the error converges. Cap +
+    // gate keep the common, well-resolved case at one pass.
+    const cap = Math.max(baseN, options.maxSamples ?? 8000);
 
     let areaScale = 0;
     for (const pole of hData.poles) {
@@ -451,66 +392,115 @@
     }
     if (areaScale === 0) areaScale = 1;
 
-    const checks = [];
-    let maxRelDiff = 0;
-    let maxAbsDiff = 0;
-
-    for (let pIdx = 0; pIdx < testPoints.length; pIdx++) {
-      const b = testPoints[pIdx];
-      for (let k = 1; k <= maxOrder; k++) {
-        let lhs = { re: 0, im: 0 };
-        for (let n = 0; n < N; n++) {
-          const s = samples[n];
-          const diff = Complex.sub(s.w, b);
-          const dPow = Complex.pow(diff, k);
-          const fVal = Complex.inv(dPow);
-          let term = Complex.mul(fVal, Complex.conj(s.w));
-          term = Complex.mul(term, s.phiPrime);
-          term = Complex.mul(term, s.z);
-          lhs = Complex.add(lhs, term);
-        }
-        lhs = Complex.scale(lhs, -1 / N);
-
-        let rhs = { re: 0, im: 0 };
-        for (const pole of hData.poles) {
-          const aMinusB = Complex.sub(pole.a, b);
-          for (let sIdx = 0; sIdx < pole.principal.length; sIdx++) {
-            const s = sIdx + 1;
-            const C = pole.principal[sIdx];
-            const sign = (s % 2 === 0) ? -1 : 1;
-            const coef = QD.binomialCoeff(k + s - 2, s - 1);
-            const expon = k + s - 1;
-            const denom = Complex.pow(aMinusB, expon);
-            const term = Complex.div(C, denom);
-            rhs = Complex.add(rhs, Complex.scale(term, sign * coef));
-          }
-        }
-        const polyPart = hData.polyPart || [];
-        const m_inf = polyPart.length - 1;
-        if (m_inf >= 0) {
-          const lMin = Math.max(k - 1, 0);
-          for (let l = lMin; l <= m_inf; l++) {
-            const expo = l - k + 1;
-            const bPow = expo === 0 ? { re: 1, im: 0 } : Complex.pow(b, expo);
-            const coef = -QD.binomialCoeff(l, expo);
-            rhs = Complex.add(rhs, Complex.scale(Complex.mul(polyPart[l], bPow), coef));
-          }
-        }
-
-        const diff = Complex.sub(lhs, rhs);
-        const absDiff = Complex.abs(diff);
-        const scale = Math.max(Complex.abs(lhs), Complex.abs(rhs), areaScale);
-        const relDiff = absDiff / scale;
-        if (relDiff > maxRelDiff) maxRelDiff = relDiff;
-        if (absDiff > maxAbsDiff) maxAbsDiff = absDiff;
-        checks.push({ bIdx: pIdx, k, lhs, rhs, absDiff, relDiff });
+    // One identity evaluation at a given uniform node count N. Also reports the
+    // |φ′| dip ratio (min/mean) — the cheap near-cusp gate for escalation.
+    function evalAtN(N) {
+      const samples = new Array(N);
+      let minAbs = Infinity, sumAbs = 0;
+      for (let n = 0; n < N; n++) {
+        const theta = 2 * Math.PI * n / N;
+        const z = { re: Math.cos(theta), im: Math.sin(theta) };
+        const taylor = phiTaylorAt_UQD(z, phi, 1);
+        samples[n] = { z, w: taylor[0], phiPrime: taylor[1] };
+        const a = Complex.abs(taylor[1]);
+        if (a < minAbs) minAbs = a;
+        sumAbs += a;
       }
+      const ratio = sumAbs > 0 ? minAbs / (sumAbs / N) : 1;
+
+      // Test points b ∈ K, ray-cast-inside and ranked by clearance from BOTH ∂Ω
+      // and every pole of h (shared QD.chooseHoleTestPoints) — replaces the old
+      // geometry-blind placement that drifted onto the origin pole at large c.
+      const testPoints = QD.chooseHoleTestPoints(samples.map(s => s.w), hData.poles, { numTestPoints });
+
+      // No point clears ∂Ω + the poles ⇒ the hole is too thin to verify the
+      // identity (the near-cusp regime). Report indeterminate (∞) rather than a
+      // false OK; the c* estimator falls back to the cusp criterion there.
+      if (testPoints.length === 0) {
+        return { checks: [], maxRelDiff: Infinity, maxAbsDiff: Infinity, areaScale,
+                 testPoints: [], maxDeg: maxOrder, numSamples: N, unbounded: true,
+                 ratio, warning: 'no test points clear of ∂Ω/poles' };
+      }
+
+      const checks = [];
+      let maxRelDiff = 0;
+      let maxAbsDiff = 0;
+
+      for (let pIdx = 0; pIdx < testPoints.length; pIdx++) {
+        const b = testPoints[pIdx];
+        for (let k = 1; k <= maxOrder; k++) {
+          let lhs = { re: 0, im: 0 };
+          for (let n = 0; n < N; n++) {
+            const s = samples[n];
+            const diff = Complex.sub(s.w, b);
+            const dPow = Complex.pow(diff, k);
+            const fVal = Complex.inv(dPow);
+            let term = Complex.mul(fVal, Complex.conj(s.w));
+            term = Complex.mul(term, s.phiPrime);
+            term = Complex.mul(term, s.z);
+            lhs = Complex.add(lhs, term);
+          }
+          lhs = Complex.scale(lhs, -1 / N);
+
+          let rhs = { re: 0, im: 0 };
+          for (const pole of hData.poles) {
+            const aMinusB = Complex.sub(pole.a, b);
+            for (let sIdx = 0; sIdx < pole.principal.length; sIdx++) {
+              const s = sIdx + 1;
+              const C = pole.principal[sIdx];
+              const sign = (s % 2 === 0) ? -1 : 1;
+              const coef = QD.binomialCoeff(k + s - 2, s - 1);
+              const expon = k + s - 1;
+              const denom = Complex.pow(aMinusB, expon);
+              const term = Complex.div(C, denom);
+              rhs = Complex.add(rhs, Complex.scale(term, sign * coef));
+            }
+          }
+          const polyPart = hData.polyPart || [];
+          const m_inf = polyPart.length - 1;
+          if (m_inf >= 0) {
+            const lMin = Math.max(k - 1, 0);
+            for (let l = lMin; l <= m_inf; l++) {
+              const expo = l - k + 1;
+              const bPow = expo === 0 ? { re: 1, im: 0 } : Complex.pow(b, expo);
+              const coef = -QD.binomialCoeff(l, expo);
+              rhs = Complex.add(rhs, Complex.scale(Complex.mul(polyPart[l], bPow), coef));
+            }
+          }
+
+          const diff = Complex.sub(lhs, rhs);
+          const absDiff = Complex.abs(diff);
+          const scale = Math.max(Complex.abs(lhs), Complex.abs(rhs), areaScale);
+          const relDiff = absDiff / scale;
+          if (relDiff > maxRelDiff) maxRelDiff = relDiff;
+          if (absDiff > maxAbsDiff) maxAbsDiff = absDiff;
+          checks.push({ bIdx: pIdx, k, lhs, rhs, absDiff, relDiff });
+        }
+      }
+
+      return { checks, maxRelDiff, maxAbsDiff, areaScale, testPoints,
+               maxDeg: maxOrder, numSamples: N, unbounded: true, ratio };
     }
 
-    return {
-      checks, maxRelDiff, maxAbsDiff, areaScale, testPoints,
-      maxDeg: maxOrder, numSamples: N, unbounded: true,
-    };
+    let res = evalAtN(baseN);
+    // Adaptive escalation (#11): only near a cusp (deep |φ′| dip) and only while
+    // the error is both above tolerance and still converging. Doubling the
+    // uniform node count restores the spectral accuracy the sharpening integrand
+    // needs, so a genuine near-cusp QD is no longer mis-rejected as identity-fail.
+    if (options.adaptiveSamples !== false) {
+      let N = baseN;
+      while (res.ratio < CUSP_RATIO_GATE && res.testPoints.length > 0 &&
+             isFinite(res.maxRelDiff) && res.maxRelDiff > IDENTITY_ESCALATE_TOL &&
+             N * 2 <= cap) {
+        N *= 2;
+        const r2 = evalAtN(N);
+        const improved = r2.maxRelDiff < res.maxRelDiff * 0.7;
+        res = r2;
+        if (!improved) break;   // diminishing returns (e.g. hole too thin) → stop
+      }
+      res.escalatedTo = N;
+    }
+    return res;
   }
 
   // ===========================================================================

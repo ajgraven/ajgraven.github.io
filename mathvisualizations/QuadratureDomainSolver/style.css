@@ -1,22 +1,53 @@
+/* ===== Design tokens =====
+   Single source of truth for the core palette + spacing scale. Introduced in
+   the QOL pass to replace ~20 duplicated hard-coded hexes and to set up future
+   theming (e.g. dark mode, which additionally needs the JS plot renderer themed
+   — deferred). Add new shared values here rather than inlining literals. */
+:root {
+  /* palette */
+  --c-primary:       #5677a8;   /* accent: headers, sliders, links, focus */
+  --c-primary-hover: #4a6792;
+  --c-accent:        #2d70c8;   /* segmented-control active fill */
+  --c-ink:           #1a2a44;   /* strong text + headings */
+  --c-text:          #2a2a2a;   /* body text */
+  --c-muted:         #777;      /* secondary text / hints */
+  --c-muted-2:       #555;      /* readouts */
+  --c-border:        #d8dbe0;   /* primary separators / rule lines */
+  --c-border-soft:   #e3e5ea;   /* card + pole borders */
+  --c-border-input:  #c5c9d2;   /* input / button borders */
+  --c-bg:            #f3f4f6;   /* app background */
+  --c-surface:       #fff;      /* cards, controls column, inputs, buttons */
+  --c-surface-2:     #fbfcfd;   /* pole rows */
+  --c-plot-bg:       #fafafa;   /* plot area (also JS-painted in ui-domain-plot) */
+  --c-hover:         #eef2f7;   /* hover wash on tabs/buttons */
+  --c-ok:            #2a8f2a;
+  --c-warn:          #b8860b;
+  --c-err:           #b53030;
+  /* spacing scale */
+  --sp-1: 4px; --sp-2: 6px; --sp-3: 8px; --sp-4: 12px; --sp-5: 16px;
+}
+
 /* ===== Layout ===== */
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  color: #2a2a2a;
-  background: #f3f4f6;
+  color: var(--c-text);
+  background: var(--c-bg);
   overflow: hidden;
 }
 
 #app {
   display: grid;
-  grid-template-columns: 410px 1fr;
+  /* Fluid sidebar: ~410px at typical widths, but shrinks on small laptops and
+     grows a little on wide monitors instead of wasting canvas space. */
+  grid-template-columns: clamp(360px, 28vw, 460px) 1fr;
   height: 100vh;
 }
 
 #controls {
-  background: #fff;
-  border-right: 1px solid #d8dbe0;
+  background: var(--c-surface);
+  border-right: 1px solid var(--c-border);
   padding: 16px;
   overflow-y: auto;
 }
@@ -24,7 +55,7 @@ body {
   font-size: 18px;
   font-weight: 600;
   margin: 0 0 12px 0;
-  color: #1a2a44;
+  color: var(--c-ink);
 }
 
 /* ===== Tab bar ===== */
@@ -32,7 +63,7 @@ body {
   display: flex;
   gap: 2px;
   margin-bottom: 12px;
-  border-bottom: 1px solid #d8dbe0;
+  border-bottom: 1px solid var(--c-border);
 }
 #tab-bar .tab-btn {
   background: transparent;
@@ -43,15 +74,15 @@ body {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  color: #5677a8;
+  color: var(--c-primary);
   border-radius: 4px 4px 0 0;
   margin-bottom: -1px;
 }
-#tab-bar .tab-btn:hover { background: #eef2f7; }
+#tab-bar .tab-btn:hover { background: var(--c-hover); }
 #tab-bar .tab-btn.active {
-  background: #fff;
-  border-color: #d8dbe0;
-  color: #1a2a44;
+  background: var(--c-surface);
+  border-color: var(--c-border);
+  color: var(--c-ink);
   font-weight: 600;
 }
 .tab-panel { display: none; }
@@ -60,7 +91,7 @@ body {
 #plot-area {
   position: relative;
   overflow: hidden;
-  background: #fafafa;
+  background: var(--c-plot-bg);
 }
 #canvas {
   display: block;
@@ -76,7 +107,7 @@ body {
   display: flex;
   gap: 6px;
   background: rgba(255,255,255,0.85);
-  border: 1px solid #d8dbe0;
+  border: 1px solid var(--c-border);
   border-radius: 6px;
   padding: 4px 6px;
   font-size: 12px;
@@ -91,7 +122,7 @@ body {
   border-radius: 4px;
   color: #1a3e7a;
 }
-#plot-overlay button:hover { background: #eef2f7; }
+#plot-overlay button:hover { background: var(--c-hover); }
 
 #plot-readout {
   position: absolute;
@@ -99,17 +130,176 @@ body {
   left: 12px;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 11px;
-  color: #555;
+  color: var(--c-muted-2);
   background: rgba(255,255,255,0.75);
   padding: 2px 6px;
   border-radius: 4px;
   pointer-events: none;
 }
 
+/* ===== Transparent solution-summary panel (overlaid bottom-right of plot) ===== */
+#status-panel {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  max-width: min(34%, 340px);
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  background: rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-ink);
+  pointer-events: auto;
+  z-index: 3;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+#status-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#sp-badge { flex: 1; font-weight: 600; }
+#sp-badge .ok   { color: var(--c-ok); }
+#sp-badge .warn { color: var(--c-warn); }
+#sp-badge .err  { color: var(--c-err); }
+#sp-collapse {
+  padding: 0 6px;
+  line-height: 1.4;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--c-primary);
+}
+/* Collapsed: hide the body, leaving only the badge bar (the verdict stays
+   visible). The chevron flips via the .collapsed class. */
+#status-panel.collapsed #status-panel-body { display: none; }
+#status-panel.collapsed #sp-collapse { transform: rotate(-90deg); }
+#status-panel-body { margin-top: 6px; }
+#status-panel details { margin: 4px 0; }
+#status-panel summary {
+  cursor: pointer;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--c-muted);
+  font-weight: 600;
+}
+#status-panel summary + div { margin-top: 4px; }
+/* Status spans reused from the old cards. */
+#status-panel .ok   { color: var(--c-ok); font-weight: 600; }
+#status-panel .warn { color: var(--c-warn); font-weight: 600; }
+#status-panel .err  { color: var(--c-err); font-weight: 600; }
+#status-panel .key  { color: var(--c-muted); }
+/* Geometric-property rows carry their margin/angle in a hover tooltip. */
+#status-panel .geom-row { cursor: help; }
+
+/* Item 1: docked — the panel becomes a normal sidebar card (no plot overlay). */
+#status-panel.docked {
+  position: static;
+  max-width: none;
+  max-height: none;
+  background: var(--c-surface);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  border: 1px solid var(--c-border-soft);
+  margin-bottom: 12px;
+}
+#status-panel.docked #sp-dock { /* icon flips to "pop out" via JS title/text */ }
+
+/* Item 1: the dock button sits beside the collapse chevron. */
+#sp-dock {
+  padding: 0 4px;
+  background: transparent; border: 0; cursor: pointer;
+  font-size: 13px; color: var(--c-primary);
+}
+/* Item 1: when docked, the on-plot panel is removed entirely and the analysis
+   sections live in this sidebar card (no plot obstruction). */
+#status-dock { }
+#status-dock #status-panel-body { margin-top: 0; }
+#status-dock summary {
+  cursor: pointer; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--c-muted); font-weight: 600;
+}
+#status-dock details { margin: 4px 0; }
+#status-dock .geom-row { cursor: help; }
+#status-dock .ok { color: var(--c-ok); font-weight: 600; }
+#status-dock .warn { color: var(--c-warn); font-weight: 600; }
+#status-dock .err { color: var(--c-err); font-weight: 600; }
+#status-dock .key { color: var(--c-muted); }
+
+/* Item 8: draw the eye to "Try harder" after a failed solve. */
+button.attention {
+  border-color: var(--c-accent);
+  box-shadow: 0 0 0 2px rgba(45, 112, 200, 0.25);
+  animation: attn-pulse 1.6s ease-in-out 2;
+}
+@keyframes attn-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(45, 112, 200, 0.18); }
+  50%      { box-shadow: 0 0 0 3px rgba(45, 112, 200, 0.42); }
+}
+@media (prefers-reduced-motion: reduce) { button.attention { animation: none; } }
+
+/* Item 4: first-run coachmark over the plot. Hidden by default; ui.js sets
+   display:flex via inline style on a first visit. */
+#plot-coach {
+  display: none;
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 5; align-items: center; gap: 10px;
+  max-width: calc(100% - 120px);
+  background: rgba(26, 42, 68, 0.93); color: #fff;
+  border-radius: 8px; padding: 8px 12px; font-size: 12px; line-height: 1.4;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+}
+#plot-coach button {
+  background: rgba(255, 255, 255, 0.20); color: #fff; border: 0;
+  border-radius: 5px; padding: 3px 9px; cursor: pointer; white-space: nowrap;
+}
+#plot-coach button:hover { background: rgba(255, 255, 255, 0.32); }
+
+/* Item 2: overlay (layers) card — color keys so the on-plot colors read clearly. */
+#overlays-card .ov-row { align-items: center; gap: 8px; }
+.ov-key {
+  flex: 0 0 auto; width: 26px; display: inline-flex; align-items: center;
+  justify-content: center; gap: 2px;
+}
+.ov-key-vf { color: var(--c-muted); font-weight: 700; }
+.ov-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.ov-dia { width: 8px; height: 8px; display: inline-block; transform: rotate(45deg); }
+.ov-key-grad {
+  width: 24px; height: 8px; border-radius: 2px;
+  background: linear-gradient(90deg, hsl(210,85%,45%), hsl(120,85%,42%), hsl(0,85%,48%));
+}
+.ov-dash {
+  width: 16px; height: 0; border-top: 2px dashed rgba(124,58,237,0.8); display: inline-block;
+}
+.ov-note { color: var(--c-muted); font-size: 10px; display: block; }
+
+/* Faber-polynomials card: monospace formula list + compact coefficient table. */
+#faber-card .faber-formula {
+  font-family: ui-monospace, Consolas, monospace; font-size: 11px;
+  color: var(--c-ink); margin: 2px 0; word-break: break-word;
+}
+#faber-card table.faber-coef {
+  border-collapse: collapse; font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px; margin: 4px 0;
+}
+#faber-card table.faber-coef th,
+#faber-card table.faber-coef td {
+  border: 1px solid var(--c-border-soft); padding: 1px 6px; text-align: left;
+}
+#faber-card table.faber-coef th { color: var(--c-muted); font-weight: 600; }
+
 /* ===== Cards ===== */
 .card {
-  background: #fff;
-  border: 1px solid #e3e5ea;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border-soft);
   border-radius: 6px;
   padding: 10px 12px;
   margin-bottom: 12px;
@@ -119,12 +309,12 @@ body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #5677a8;
+  color: var(--c-primary);
   margin: 0 0 8px 0;
 }
 .card .hint {
   font-size: 11px;
-  color: #777;
+  color: var(--c-muted);
   margin-bottom: 6px;
 }
 
@@ -138,14 +328,14 @@ body {
   padding: 0;
   font-size: 11px; font-weight: 600;
   line-height: 1;
-  color: #777;
+  color: var(--c-muted);
   background: #eef1f6;
-  border: 1px solid #c5c9d2;
+  border: 1px solid var(--c-border-input);
   border-radius: 50%;
   cursor: help;
   vertical-align: middle;
 }
-.help-btn:hover { color: #1a2a44; background: #dde3ee; border-color: #99a3b5; }
+.help-btn:hover { color: var(--c-ink); background: #dde3ee; border-color: #99a3b5; }
 .help-btn:focus { outline: 2px solid rgba(86, 119, 168, 0.4); outline-offset: 1px; }
 
 .help-popover {
@@ -155,13 +345,13 @@ body {
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.45;
-  color: #1a2a44;
+  color: var(--c-ink);
   background: #fffef7;
-  border: 1px solid #c5c9d2;
+  border: 1px solid var(--c-border-input);
   border-radius: 6px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
 }
-.help-popover h3 { margin: 0 0 4px 0; font-size: 12px; color: #5677a8; }
+.help-popover h3 { margin: 0 0 4px 0; font-size: 12px; color: var(--c-primary); }
 .help-popover code, .help-popover kbd {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 11px;
@@ -181,14 +371,14 @@ body {
   font-size: 11px;
   line-height: 1.4;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
-  color: #1a2a44;
+  color: var(--c-ink);
   background: #fffef7;
-  border: 1px solid #c5c9d2;
+  border: 1px solid var(--c-border-input);
   border-radius: 5px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
   white-space: nowrap;
 }
-.hover-tooltip .tt-class { display: block; font-family: inherit; color: #5677a8; font-weight: 600; margin-top: 2px; }
+.hover-tooltip .tt-class { display: block; font-family: inherit; color: var(--c-primary); font-weight: 600; margin-top: 2px; }
 .hover-tooltip .tt-row   { display: block; }
 
 .copy-btn {
@@ -199,14 +389,14 @@ body {
   width: 18px; height: 18px;
   padding: 0;
   font-size: 12px;
-  color: #777;
+  color: var(--c-muted);
   background: #eef1f6;
-  border: 1px solid #c5c9d2;
+  border: 1px solid var(--c-border-input);
   border-radius: 3px;
   cursor: pointer;
   vertical-align: middle;
 }
-.copy-btn:hover { color: #1a2a44; background: #dde3ee; border-color: #99a3b5; }
+.copy-btn:hover { color: var(--c-ink); background: #dde3ee; border-color: #99a3b5; }
 
 .copy-toast {
   position: absolute;
@@ -227,25 +417,36 @@ body {
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
 }
+/* The overlay centers via translate(-50%,-50%), which only works if it has a
+   real size — so the inner popover must take part in normal flow (NOT absolute,
+   the .help-popover default, which would collapse the overlay to 0×0 and let the
+   panel hang off-center past the viewport bottom). Cap width/height to the
+   viewport and scroll if the shortcut list is long. */
+.shortcuts-overlay .help-popover {
+  position: static;
+  max-width: min(92vw, 460px);
+  max-height: 85vh;
+  overflow-y: auto;
+}
 .shortcuts-table { font-size: 12px; border-spacing: 6px 4px; }
-.shortcuts-table td:first-child { text-align: right; }
+.shortcuts-table td:first-child { text-align: right; white-space: nowrap; vertical-align: top; }
 
 /* ===== Inputs ===== */
 input[type="text"], input[type="number"], select {
   font: inherit;
   font-size: 13px;
   padding: 4px 6px;
-  border: 1px solid #c5c9d2;
+  border: 1px solid var(--c-border-input);
   border-radius: 4px;
-  background: #fff;
-  color: #1a2a44;
+  background: var(--c-surface);
+  color: var(--c-ink);
 }
 input[type="text"]:focus, input[type="number"]:focus, select:focus {
   outline: none;
-  border-color: #5677a8;
+  border-color: var(--c-primary);
   box-shadow: 0 0 0 2px rgba(86, 119, 168, 0.18);
 }
-input.invalid { border-color: #b53030; background: #fcf2f2; }
+input.invalid { border-color: var(--c-err); background: #fcf2f2; }
 input[type="text"].cnum { width: 100px; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
 
 /* 1-D sliders (magnitude / argument) attached to residue inputs */
@@ -266,21 +467,21 @@ input[type="text"].cnum { width: 100px; font-family: ui-monospace, "SF Mono", Co
   width: 28px;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 11px;
-  color: #5677a8;
+  color: var(--c-primary);
 }
 .slider1d {
   flex: 1 1 auto;
   min-width: 80px;
   height: 16px;
   margin: 0;
-  accent-color: #5677a8;
+  accent-color: var(--c-primary);
 }
 .slider1d-val {
   font-family: ui-monospace, monospace;
   font-size: 10px;
   width: 56px;
   text-align: right;
-  color: #555;
+  color: var(--c-muted-2);
 }
 
 label {
@@ -296,37 +497,83 @@ button {
   font: inherit;
   font-size: 13px;
   padding: 5px 10px;
-  border: 1px solid #c5c9d2;
-  background: #fff;
+  border: 1px solid var(--c-border-input);
+  background: var(--c-surface);
   border-radius: 4px;
   cursor: pointer;
-  color: #1a2a44;
+  color: var(--c-ink);
 }
-button:hover { background: #eef2f7; border-color: #5677a8; }
-button.primary { background: #5677a8; color: #fff; border-color: #5677a8; }
-button.primary:hover { background: #4a6792; }
+button:hover { background: var(--c-hover); border-color: var(--c-primary); }
+button.primary { background: var(--c-primary); color: #fff; border-color: var(--c-primary); }
+button.primary:hover { background: var(--c-primary-hover); }
+/* Visible keyboard-focus ring on all buttons (a11y). :focus-visible only
+   shows it for keyboard/programmatic focus, not mouse clicks. */
+button:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
 button.small { padding: 2px 7px; font-size: 12px; }
-button.danger { color: #b53030; border-color: #e2c4c4; }
+button.danger { color: var(--c-err); border-color: #e2c4c4; }
 button.danger:hover { background: #fceeee; }
 
 /* ===== Pole entries ===== */
 .pole {
-  border: 1px solid #e3e5ea;
+  border: 1px solid var(--c-border-soft);
   border-radius: 5px;
   padding: 8px 10px;
   margin-bottom: 8px;
-  background: #fbfcfd;
+  background: var(--c-surface-2);
 }
+/* Separator between the mode selector and the solved Riemann-map display. */
+.dm-sep {
+  border: 0;
+  border-top: 1px solid var(--c-border-soft);
+  margin: 10px 0 0;
+}
+/* Riemann-map block at the bottom of the Domain-type tile. */
+#dm-riemann { margin-top: 10px; }
+.dm-riemann-label { display: flex; align-items: center; gap: 4px; }
+/* #c-card is relocated INTO the Domain-type tile (below the φ(z) formula);
+   strip its card chrome so it reads as a sub-section, not a nested box. */
+#domain-mode-card > #c-card {
+  border: 0;
+  padding: 0;
+  margin: 8px 0 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Pole header is the <summary> of the collapsible <details.pole>. */
 .pole-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;            /* hide the default disclosure triangle… */
 }
+.pole-header::-webkit-details-marker { display: none; }
+.pole-header::before {         /* …replace with our own chevron */
+  content: '▸';
+  color: var(--c-primary);
+  font-size: 10px;
+  transition: transform 0.12s ease;
+}
+details.pole[open] > .pole-header::before { transform: rotate(90deg); }
+details.pole[open] > .pole-header { margin-bottom: 6px; }
 .pole-num {
   font-weight: 600;
   font-size: 12px;
-  color: #5677a8;
+  color: var(--c-primary);
+}
+/* Location preview shown in the collapsed summary. flex:1 pushes the × right. */
+.pole-loc {
+  flex: 1;
+  font-size: 11px;
+  color: var(--c-muted);
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .residues { margin-top: 5px; }
 .residue-row {
@@ -339,19 +586,29 @@ button.danger:hover { background: #fceeee; }
 .residue-row .label-fixed {
   width: 38px;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
-  color: #5677a8;
+  color: var(--c-primary);
 }
 
 /* ===== Status ===== */
+/* (Geometric-properties / cusps moved to the #status-panel overlay, which has
+   its own .ok/.warn/.err/.key rules; this is just the operational #status card.) */
 #status {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
 }
-#status .ok    { color: #2a8f2a; font-weight: 600; }
-#status .warn  { color: #b8860b; font-weight: 600; }
-#status .err   { color: #b53030; font-weight: 600; }
-#status .key   { color: #777; }
+#status .ok   { color: var(--c-ok); font-weight: 600; }
+#status .warn { color: var(--c-warn); font-weight: 600; }
+#status .err  { color: var(--c-err); font-weight: 600; }
+#status .key  { color: var(--c-muted); }
+
+/* Analytic-oracle (#8) and Faber-polynomials cards reuse the .ok/.warn/.err/.key
+   convention; the status-panel rules above are id-scoped, so give the cards their
+   own copy (otherwise ✓ pass / ⚠ marginal / ✗ off all render in the default ink). */
+#oracle-content .ok,   #faber-content .ok   { color: var(--c-ok);    font-weight: 600; }
+#oracle-content .warn, #faber-content .warn { color: var(--c-warn);  font-weight: 600; }
+#oracle-content .err,  #faber-content .err  { color: var(--c-err);   font-weight: 600; }
+#oracle-content .key,  #faber-content .key  { color: var(--c-muted); }
 
 #alternates-card .alt {
   display: flex;
@@ -363,61 +620,39 @@ button.danger:hover { background: #fceeee; }
 }
 #alternates-card .alt:last-child { border-bottom: none; }
 
-/* ===== Riemann map formula card (KaTeX-typeset) ===== */
+/* ===== Riemann-map LaTeX (KaTeX) — shown in the Domain-type tile =====
+   .rm-sym  = boxed SYMBOLIC identity (#dm-riemann-sym, revealed by "?"; also
+              reused by the Direct tab's h(w) display).
+   .rm-numer = the explicit NUMERICAL closed form (#dm-riemann-numer), with
+              horizontal scroll for long expressions. */
 .rm-sym {
   background: #f4f6fb;
-  border-left: 3px solid #5677a8;
+  border-left: 3px solid var(--c-primary);
   padding: 6px 10px;
   margin: 4px 0 10px 0;
   overflow-x: auto;
 }
-.rm-sym .katex { font-size: 0.88em; }
-
-.rm-section { margin-top: 8px; }
-.rm-section > summary {
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-  color: #5677a8;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  user-select: none;
-  padding: 2px 0;
-}
-.rm-section > summary:hover { color: #3a5680; }
+.rm-sym .katex { font-size: 0.95em; }
+/* Left-align display-mode math (KaTeX centres it by default), so formulas
+   read from the left margin instead of floating mid-card with ragged gaps. */
+.rm-sym .katex-display { text-align: left; margin: 4px 0; }
 
 .rm-numer {
   padding: 4px 0 4px 4px;
   overflow-x: auto;
 }
-.rm-numer .katex { font-size: 0.85em; }
-.rm-numer .katex-display { margin: 4px 0; }
+.rm-numer .katex { font-size: 0.95em; }
+.rm-numer .katex-display { margin: 4px 0; text-align: left; }
 
-table.rm-params {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 6px;
-  font-size: 12px;
-}
-table.rm-params td {
-  padding: 4px 8px;
-  border-bottom: 1px solid #eef0f4;
-  vertical-align: middle;
-}
-table.rm-params tr:last-child td { border-bottom: none; }
-table.rm-params td.rm-name {
-  width: 1%;            /* shrink-to-fit */
-  white-space: nowrap;
-  text-align: right;
-  color: #1a3e7a;
-  background: #f7f9fc;
-}
-table.rm-params td.rm-value {
+/* ===== Schwarz σ-form panel (KaTeX-typeset; #2 typesetting pass) ===== */
+#schwarz-sigma-form-out .ssf-fam {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
-  color: #1a2a44;
-  word-break: break-word;
+  color: var(--c-muted);
+  margin-bottom: 4px;
 }
-table.rm-params td.rm-name .katex { font-size: 1em; }
+#schwarz-sigma-form-out .ssf-row { overflow-x: auto; }
+#schwarz-sigma-form-out .katex { font-size: 0.95em; }
+#schwarz-sigma-form-out .katex-display { text-align: left; margin: 4px 0; }
 
 /* ===== Riemann-sphere GL canvas ===== */
 /* Mirrors the #schwarz-gl-canvas pattern: absolute-positioned behind the
@@ -440,7 +675,7 @@ table.rm-params td.rm-name .katex { font-size: 1em; }
   position: absolute;
   pointer-events: none;
   background: rgba(255, 255, 255, 0.88);
-  border: 1px solid #d8dbe0;
+  border: 1px solid var(--c-border);
   border-radius: 4px;
   padding: 4px 8px;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
@@ -457,27 +692,32 @@ table.rm-params td.rm-name .katex { font-size: 1em; }
 .search-spinner {
   display: inline-block;
   width: 10px; height: 10px;
-  border: 2px solid #c5c9d2;
-  border-top-color: #5677a8;
+  border: 2px solid var(--c-border-input);
+  border-top-color: var(--c-primary);
   border-radius: 50%;
   animation: spin 0.9s linear infinite;
   vertical-align: middle;
   margin-right: 4px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Respect the user's reduced-motion preference: drop the continuous spin
+   (it still renders as a static partial ring, which reads as "busy"). */
+@media (prefers-reduced-motion: reduce) {
+  .search-spinner { animation: none; }
+}
 
 /* ===== Search options (advanced) panel ===== */
 .search-opt-group {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px dashed #d8dbe0;
+  border-top: 1px dashed var(--c-border);
 }
 .search-opt-group-title {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #555;
+  color: var(--c-muted-2);
   margin-bottom: 6px;
 }
 input.so-num {
@@ -495,7 +735,7 @@ input.so-num {
 }
 .domain-mode-group-label {
   font-size: 10px;
-  color: #777;
+  color: var(--c-muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-bottom: 3px;
@@ -524,10 +764,31 @@ input.so-num {
 }
 .segmented .seg-btn:hover { background: #e8edf5; }
 .segmented .seg-btn.active {
-  background: #2d70c8;
+  background: var(--c-accent);
   color: #fff;
 }
 .segmented .seg-btn:not(:last-child) {
   border-right: 1px solid #c2cad6;
 }
+/* ===== Responsive: narrow viewports (tablets / small laptops / phones) =====
+   Below ~860px the fixed sidebar+canvas split is unusable, so stack the controls
+   above the plot. The controls column scrolls within a capped height; the plot
+   takes the rest. Fixed-pixel inline input/select widths are capped to the
+   column so they don't overflow (max-width caps the inline `width`). */
+@media (max-width: 860px) {
+  #app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 45vh) 1fr;
+  }
+  #controls {
+    border-right: none;
+    border-bottom: 1px solid var(--c-border);
+  }
+  #controls input[type="text"],
+  #controls input[type="number"],
+  #controls select {
+    max-width: 100%;
+  }
+}
+
 /* .view-plane-only / .view-sphere-only — visibility toggled by JS. */

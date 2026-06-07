@@ -447,6 +447,135 @@
   }
 
   // ===========================================================================
+  // adaptUnboundedPQD — unbounded power-weighted QDs (Family.unboundedPQD).
+  //   φ(z) = z · (r#(z))^{1/α},  r#(z) = c^α + Σ_l G_l/z^l + Σ_j Σ_k conj(A)·u^k.
+  // On ∂𝔻, conj(r#(z)) = R(z) := c^α + Σ_l conj(G_l) z^l + R##(z) (the branch
+  // Schwarz companion), and (1/z) = conj(z), so
+  //   F(z) := (1/z)·(R(z))^{1/α} = conj(z)·conj((r#)^{1/α}) = conj(φ(z))
+  // on the boundary ⇒ σ = conj(F(ψ(w))) is the identity on ∂Ω. The αth root
+  // uses the principal branch (C.cpow); G_l = phi.polyA[l-1].
+  // ===========================================================================
+  function adaptUnboundedPQD(phi) {
+    const alpha = phi.alpha;
+    const c = phi.c;
+    const G = phi.polyA || [];
+    const nG = G.length;
+    const r0 = C.cpow({ re: c, im: 0 }, alpha);            // c^α (real > 0)
+    const cRoot = (v) => C.cpow(v, 1 / alpha);
+
+    function evalRHash(z) {
+      let acc = { re: r0.re, im: r0.im };
+      if (nG > 0) {
+        const zInv = C.inv(z);
+        let zInvPow = { re: zInv.re, im: zInv.im };          // z^{-1}
+        for (let l = 1; l <= nG; l++) {
+          acc = C.add(acc, C.mul(G[l - 1], zInvPow));
+          if (l < nG) zInvPow = C.mul(zInvPow, zInv);
+        }
+      }
+      return C.add(acc, branchPhiContribution(phi, z));
+    }
+    function rHashDeriv(z) {
+      let acc = { re: 0, im: 0 };
+      if (nG > 0) {
+        const zInv = C.inv(z);
+        let zInvPow = C.mul(zInv, zInv);                     // z^{-2}
+        for (let l = 1; l <= nG; l++) {
+          acc = C.sub(acc, C.mul(C.scale(G[l - 1], l), zInvPow));
+          zInvPow = C.mul(zInvPow, zInv);
+        }
+      }
+      return C.add(acc, branchPhiDeriv(phi, z));
+    }
+    function evalPhi(z) {
+      return C.mul(z, cRoot(evalRHash(z)));
+    }
+    function derivPhi(z) {
+      // φ' = root·(1 + z·r#'/(α·r#)),  root = (r#)^{1/α}.
+      const rH = evalRHash(z);
+      const root = cRoot(rH);
+      const inner = C.add({ re: 1, im: 0 }, C.div(C.mul(z, rHashDeriv(z)), C.scale(rH, alpha)));
+      return C.mul(root, inner);
+    }
+    function evalF(z) {
+      // R(z) = c^α + Σ_l conj(G_l) z^l + R##(z);  F = (1/z)·(R)^{1/α}.
+      let R = { re: r0.re, im: r0.im };
+      let zPow = { re: z.re, im: z.im };                     // z^1
+      for (let l = 1; l <= nG; l++) {
+        R = C.add(R, C.mul(C.conj(G[l - 1]), zPow));
+        zPow = C.mul(zPow, z);
+      }
+      R = C.add(R, branchSchwarzContribution(phi, z));
+      return C.mul(C.inv(z), cRoot(R));
+    }
+    return {
+      family: 'unboundedPQD',
+      c, alpha,
+      evalPhi, derivPhi, evalF,
+      seedFor: (w, last) => bestSeedUnbounded(phi, w, last),
+      acceptZ: (z) => Math.hypot(z.re, z.im) > 1 + 1e-9,
+    };
+  }
+
+  // ===========================================================================
+  // adaptUnboundedPQD_singular — unbounded SINGULAR power-weighted QDs (0 ∈ Ω).
+  //   φ(z) = z · b_{z₀}(z) · (r#(z))^{1/α},   r#(z) = |cz₀|^α + Σ_l G_l/z^l + …
+  // On ∂𝔻: b#_{z₀}=conj(b_{z₀}), conj(r#)=R, (1/z)=conj(z), so
+  //   F(z) = (1/z)·b#_{z₀}(z)·(R(z))^{1/α} = conj(φ(z))  ⇒  σ = id on ∂Ω.
+  // ===========================================================================
+  function adaptUnboundedPQD_singular(phi) {
+    const alpha = phi.alpha;
+    const z0 = phi.z0;
+    const r0 = C.cpow({ re: phi.c * Math.hypot(z0.re, z0.im), im: 0 }, alpha);  // |cz₀|^α
+    const G = phi.polyA || [];
+    const nG = G.length;
+    const cRoot = (v) => C.cpow(v, 1 / alpha);
+    function evalRHash(z) {
+      let acc = { re: r0.re, im: r0.im };
+      if (nG > 0) {
+        const zInv = C.inv(z);
+        let zInvPow = { re: zInv.re, im: zInv.im };
+        for (let l = 1; l <= nG; l++) { acc = C.add(acc, C.mul(G[l - 1], zInvPow)); if (l < nG) zInvPow = C.mul(zInvPow, zInv); }
+      }
+      return C.add(acc, branchPhiContribution(phi, z));
+    }
+    function rHashDeriv(z) {
+      let acc = { re: 0, im: 0 };
+      if (nG > 0) {
+        const zInv = C.inv(z);
+        let zInvPow = C.mul(zInv, zInv);
+        for (let l = 1; l <= nG; l++) { acc = C.sub(acc, C.mul(C.scale(G[l - 1], l), zInvPow)); zInvPow = C.mul(zInvPow, zInv); }
+      }
+      return C.add(acc, branchPhiDeriv(phi, z));
+    }
+    function evalPhi(z) {
+      return C.mul(C.mul(z, blaschkeEval(z, z0)), cRoot(evalRHash(z)));
+    }
+    function derivPhi(z) {
+      // φ'/φ = 1/z + b'/b + r#'/(α r#).
+      const phiV = evalPhi(z);
+      const logDeriv = C.add(C.add(C.inv(z), blaschkeLogDeriv(z, z0)),
+                             C.div(rHashDeriv(z), C.scale(evalRHash(z), alpha)));
+      return C.mul(phiV, logDeriv);
+    }
+    function evalF(z) {
+      // R(z) = |cz₀|^α + Σ conj(G_l) z^l + R##(z);  F = (1/z)·b#·(R)^{1/α}.
+      let R = { re: r0.re, im: r0.im };
+      let zPow = { re: z.re, im: z.im };
+      for (let l = 1; l <= nG; l++) { R = C.add(R, C.mul(C.conj(G[l - 1]), zPow)); zPow = C.mul(zPow, z); }
+      R = C.add(R, branchSchwarzContribution(phi, z));
+      return C.mul(C.mul(C.inv(z), blaschkeSchwarz(z, z0)), cRoot(R));
+    }
+    return {
+      family: 'unboundedPQD_singular',
+      c: phi.c, alpha, z0,
+      evalPhi, derivPhi, evalF,
+      seedFor: (w, last) => bestSeedUnbounded(phi, w, last),
+      acceptZ: (z) => Math.hypot(z.re, z.im) > 1 + 1e-9,
+    };
+  }
+
+  // ===========================================================================
   // LQD support — bounded, unbounded, ± singular. The four LQD families share
   // an inverse-Faber rational kernel r#(z) (mathematically identical to the
   // bounded-classical-QD φ with w₀ = 0). Each family wraps r# differently:
@@ -539,6 +668,161 @@
     const m = Math.hypot(cand.re, cand.im);
     if (m < 0.95) return cand;
     return { re: cand.re * 0.9 / m, im: cand.im * 0.9 / m };
+  }
+
+  // ===========================================================================
+  // adaptPowerQD — bounded power-weighted QDs (Family.powerQD, α ≥ 2).
+  //
+  // Math:
+  //   φ(z) = (R#(z))^{1/α}       where R#(z) = w₀^α + Σ_j Σ_k conj(A_{j,k}) z^k/(1 − conj(z_j) z)^k
+  //   F(z) = (R(z))^{1/α}        where R(z)  = conj(w₀)^α + Σ_j Σ_k A_{j,k} / (z − z_j)^k
+  //
+  // R is the "outside-the-disk" companion of R# (via the # transform). On
+  // ∂𝔻, R#(z) and R(z) are complex conjugates, so on ∂𝔻 we have
+  //   F(z) = (R(z))^{1/α} = (conj(R#(z)))^{1/α} = conj((R#(z))^{1/α}) = conj(φ(z))
+  // i.e. F = conj(φ) on the boundary. The sigma() wrapper in
+  // buildFromAdapter then returns conj(F(ψ(w))) — the Schwarz reflection,
+  // which on ∂Ω equals w (the identity, ✓ for any Schwarz reflection).
+  //
+  // For α = 1 this reduces (formally) to adaptBounded — but Family.powerQD
+  // is only dispatched for α ≥ 2; α = 1 routes to boundedQD.
+  //
+  // Branch convention: principal αth root via cprincipalRoot. R# is
+  // non-vanishing on 𝔻̄ for valid PQDs (winding 0 around 0), so the
+  // principal branch is consistent on most of the disk — but if the
+  // orbit crosses the negative real axis of R# during iteration, the
+  // resulting w-value will flip sheets. For the fractal renderer this
+  // is acceptable (the escape-time field still classifies correctly);
+  // for orbit drawing along curves the renderer can apply a local
+  // unwrap analogous to sweepUnitCircle_PQD if needed.
+  //
+  // OFF-AXIS POLES (|arg a| > π/α): the solver layer now reconstructs φ on a
+  // single continuous branch ANCHORED at φ(0)=w0 (QD.PqdCommon.phiAnchored),
+  // which is what makes off-axis-pole bounded PQDs solvable. The Schwarz
+  // adapter here deliberately stays on the PRINCIPAL root because evalPhi/evalF
+  // feed the per-pixel-per-iteration fractal escape-time loop, where a K-step
+  // continuation walk would be prohibitively slow (and sheet flips are
+  // tolerated). The Schwarz tab's DOMAIN BOUNDARY is still correct off-axis —
+  // schwarz-ui builds it from the anchored QD.sampleBoundaryAdaptive. Only the
+  // interior σ-dynamics (fractal coloring, σ⁻¹ preimage tree / limit set) run
+  // on the principal sheet, so for off-axis bounded PQDs those advanced
+  // visualizations may sit on a rotated sheet. Making them fully sheet-correct
+  // would require anchoring evalPhi/evalF here (and a perf-conscious cache),
+  // tracked as a follow-up.
+  // ===========================================================================
+  function adaptPowerQD(phi) {
+    const alpha = phi.alpha;
+    const w0 = phi.w0 || { re: 0, im: 0 };
+
+    // r0 = w₀^α (constant term of R#). Real-power form ⇒ arbitrary α.
+    const r0 = C.cpow(w0, alpha);
+    // r0_conj = conj(w₀)^α (constant term of R) = conj(r0).
+    const r0Conj = C.conj(r0);
+
+    // Principal αth root for complex c (= c^{1/α}). Valid for arbitrary α.
+    function cRoot(c) {
+      return C.cpow(c, 1 / alpha);
+    }
+
+    function evalPhi(z) {
+      const rH = C.add(r0, branchPhiContribution(phi, z));
+      return cRoot(rH);
+    }
+
+    function derivPhi(z) {
+      // φ'(z) = R#'(z) / (α · φ(z)^{α-1}) (chain rule on φ^α = R#).
+      const rHp = branchPhiDeriv(phi, z);
+      const phiV = evalPhi(z);
+      const phiPowAm1 = C.cpow(phiV, alpha - 1);     // φ^{α-1}, arbitrary α
+      return C.div(rHp, C.scale(phiPowAm1, alpha));
+    }
+
+    function evalF(z) {
+      // F(z) = (R(z))^{1/α} where R(z) = conj(w₀)^α + Σ A_{j,k}/(z-z_j)^k.
+      // Reuses branchSchwarzContribution (the boundedQD R-rational).
+      const Rv = C.add(r0Conj, branchSchwarzContribution(phi, z));
+      return cRoot(Rv);
+    }
+
+    // Seed for psi: φ(0) = (R#(0))^{1/α} = (w₀^α)^{1/α} = w₀.
+    // φ'(0) = R#'(0)/(α·w₀^{α-1}) where R#'(0) = Σ_j conj(A_{j,1}).
+    let dRH0 = { re: 0, im: 0 };
+    for (const br of phi.branches || []) {
+      if (br.A && br.A.length > 0) dRH0 = C.add(dRH0, C.conj(br.A[0]));
+    }
+    const w0PowAm1 = C.cpow(w0, alpha - 1);          // w₀^{α-1}, arbitrary α
+    const dphi0 = C.div(dRH0, C.scale(w0PowAm1, alpha));
+    function seedFor(w, last) {
+      if (last && Math.hypot(last.re, last.im) < 0.9999) return last;
+      const denomMag = Math.hypot(dphi0.re, dphi0.im);
+      if (denomMag > 1e-12) {
+        const cand = C.div(C.sub(w, w0), dphi0);
+        const m = Math.hypot(cand.re, cand.im);
+        if (m < 0.95) return cand;
+        return { re: cand.re * 0.9 / m, im: cand.im * 0.9 / m };
+      }
+      return { re: 0, im: 0 };
+    }
+
+    return {
+      family: 'powerQD',
+      w0,
+      alpha,
+      evalPhi, derivPhi, evalF,
+      seedFor,
+      acceptZ: (z) => Math.hypot(z.re, z.im) < 1 - 1e-9,
+    };
+  }
+
+  // ===========================================================================
+  // adaptPowerQD_singular — bounded SINGULAR power-weighted QDs
+  // (Family.powerQD_singular, 0 ∈ Ω). φ(z) = b_{z₀}(z) · (R#(z))^{1/α}.
+  //
+  // Mirrors adaptPowerQD with two differences from the non-singular case:
+  //   • the Blaschke prefactor b_{z₀}(z) (and its # companion b#_{z₀} in F);
+  //   • the R# constant is w₀^α/|z₀|^α (not w₀^α), so R's constant is its
+  //     conjugate conj(w₀)^α/|z₀|^α.
+  // On ∂𝔻, R# and R are conjugates and b#_{z₀} = conj(b_{z₀}), so
+  //   F(z) = b#_{z₀}(z)·(R(z))^{1/α} = conj(b_{z₀}(z))·conj((R#)^{1/α}) = conj(φ(z)),
+  // giving σ = identity on ∂Ω (✓). z₀ = 0 is unsupported by the Blaschke
+  // helpers; valid singular PQDs have z₀ ≠ 0 (the origin-preimage).
+  // ===========================================================================
+  function adaptPowerQD_singular(phi) {
+    const alpha = phi.alpha;
+    const w0 = phi.w0 || { re: 0, im: 0 };
+    const z0 = phi.z0;
+    const z0absPowA = Math.pow(C.abs2(z0), 0.5 * alpha);     // |z₀|^α
+    const r0     = C.scale(C.cpow(w0, alpha), 1 / z0absPowA); // R# constant
+    const r0Conj = C.conj(r0);                                // R constant
+    function cRoot(c) { return C.cpow(c, 1 / alpha); }
+    function evalPhi(z) {
+      const rH = C.add(r0, branchPhiContribution(phi, z));
+      return C.mul(blaschkeEval(z, z0), cRoot(rH));
+    }
+    function derivPhi(z) {
+      // φ = b·(R#)^{1/α}  ⇒  φ' = φ·( b'/b + R#'/(α·R#) ).
+      const phiV = evalPhi(z);
+      const rH = C.add(r0, branchPhiContribution(phi, z));
+      const rHp = branchPhiDeriv(phi, z);
+      const rootLogDeriv = C.div(rHp, C.scale(rH, alpha));
+      return C.mul(phiV, C.add(blaschkeLogDeriv(z, z0), rootLogDeriv));
+    }
+    function evalF(z) {
+      // F(z) = b#_{z₀}(z) · (R(z))^{1/α},  R(z) = conj(w₀)^α/|z₀|^α + Σ A/(z-z_j)^k.
+      const Rv = C.add(r0Conj, branchSchwarzContribution(phi, z));
+      return C.mul(blaschkeSchwarz(z, z0), cRoot(Rv));
+    }
+    function seedFor(w, last) {
+      if (last && Math.hypot(last.re, last.im) < 0.9999) return last;
+      return { re: 0.3, im: 0.3 };
+    }
+    return {
+      family: 'powerQD_singular',
+      w0, alpha, z0,
+      evalPhi, derivPhi, evalF,
+      seedFor,
+      acceptZ: (z) => Math.hypot(z.re, z.im) < 1 - 1e-9,
+    };
   }
 
   function adaptBoundedLQD(phi) {
@@ -779,6 +1063,10 @@
       case 'boundedLQD_singular':   adapter = adaptBoundedLQD_singular(phi); break;
       case 'unboundedLQD':          adapter = adaptUnboundedLQD(phi); break;
       case 'unboundedLQD_singular': adapter = adaptUnboundedLQD_singular(phi); break;
+      case 'powerQD':               adapter = adaptPowerQD(phi); break;
+      case 'powerQD_singular':      adapter = adaptPowerQD_singular(phi); break;
+      case 'unboundedPQD':          adapter = adaptUnboundedPQD(phi); break;
+      case 'unboundedPQD_singular': adapter = adaptUnboundedPQD_singular(phi); break;
       default:
         adapter = phi.unbounded ? adaptUnbounded(phi) : adaptBounded(phi, hData);
     }
@@ -808,12 +1096,13 @@
     function sigma(w, seedHint) {
       const z = psi(w, seedHint);
       if (!z) return null;
-      // Pole-near-origin sentinel. F doesn't generally have a pole at z=0
-      // (classical bounded F has poles at the z_j ∈ 𝔻 instead; LQD-bounded F
-      // has essential singularities at z_j; for unbounded families ψ never
-      // lands near 0). The check survives mostly as a safety: if ψ converges
-      // to a tiny z by accident, evalF likely produces a non-finite value
-      // that the next guard catches anyway.
+      // z≈0 sentinel. Only the UNBOUNDED F/G has a genuine pole at z=0 (its
+      // c/z term); bounded F is regular there (classical poles sit at the
+      // z_j ∈ 𝔻; LQD-bounded F has essential singularities at the z_j). For
+      // unbounded families ψ never lands near 0 in practice, so this mostly
+      // survives as safety: if ψ converges to a tiny z by accident, evalF
+      // likely returns a non-finite value the next guard catches anyway.
+      // (Mirrors the GPU sentinel in schwarz-webgl.js sigmaStep.)
       if (Math.hypot(z.re, z.im) < 1e-14) return null;
       let Sv;
       try { Sv = adapter.evalF(z); }

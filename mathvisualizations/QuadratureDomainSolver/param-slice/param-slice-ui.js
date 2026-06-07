@@ -19,6 +19,9 @@
   'use strict';
   if (typeof QD === 'undefined') return;
   const PS = global.ParamSlice;
+  // Forward binding for the Phase-3 extracted adaptive render engine (assigned
+  // by the install near the end of this file; startRun calls it by name).
+  let runAdaptive2D;
   if (!PS) return;
 
   const sliceState = {
@@ -45,6 +48,12 @@
     // last hovered φ's boundary samples, so scrubbing across many pixels
     // pointing at the same nearest φ doesn't re-sample 128 points per frame.
     miniCache: { phi: null, pts: null },
+    // Live-solve hover preview (HANDOFF #36): after the cursor settles
+    // on a cell for ~150 ms, kick off a Newton solve at the *exact*
+    // hovered parameters (warm-started from nearestPhi) and swap the
+    // mini-canvas to the freshly-solved φ. token bumps on every hover so
+    // stale solves can be discarded.
+    liveSolve: { timer: null, token: 0, lastPhi: null, lastCellKey: null },
   };
 
   // ---------------------------------------------------------------------------
@@ -292,6 +301,8 @@
                color:#444; font-family:ui-monospace,monospace; word-break:break-all;">
             (hover the slice)
           </div>
+          <div id="ps-hover-status" style="font-size:10px; line-height:1.4; margin-top:4px;
+               color:#888; font-family:ui-monospace,monospace;"></div>
           <button id="ps-hover-send" class="small" style="margin-top:8px;" disabled>Send to inverse</button>
         </div>
       </div>
@@ -314,12 +325,15 @@
     const txtEl = document.getElementById('ps-hover-text');
     const btn   = document.getElementById('ps-hover-send');
     const canvas = document.getElementById('ps-hover-canvas');
+    const statusEl = document.getElementById('ps-hover-status');
     if (!txtEl || !canvas) return;
     if (!cellInfo) {
       _lastHovered = null;
       txtEl.innerHTML = '<i style="color:#888;">(hover the slice)</i>';
+      if (statusEl) statusEl.textContent = '';
       if (btn) btn.disabled = true;
       _clearMiniCanvas(canvas);
+      cancelLiveSolve();
       return;
     }
     _lastHovered = cellInfo;
@@ -333,9 +347,97 @@
     lines.push(`<span style="color:#5677a8;">${escapeHTML(lbl)}</span>` +
                (cellInfo.cls === PS.CLASS_VALID ? ` · ${cellInfo.iter} iters` : ''));
     txtEl.innerHTML = lines.map(l => `<div>${l}</div>`).join('');
-    // Render the boundary if we have a φ for (or near) this pixel.
+    // Cached-φ preview — instant. Uses nearestPhi's spatial-bucket hit.
     const hit = sliceState.nearestPhi(cellInfo.col, cellInfo.row);
-    _drawMiniBoundary(canvas, hit && hit.phi);
+    const cachedPhi = hit && hit.phi;
+    _drawMiniBoundary(canvas, cachedPhi);
+    // HANDOFF #36: schedule a live solve at the exact hovered parameters,
+    // warm-started from the cached φ. Cancels any pending solve and bumps
+    // the token so in-flight solves can detect they've been superseded.
+    scheduleLiveSolve(cellInfo, cachedPhi, statusEl, canvas);
+  }
+
+  // Live-solve scheduler (HANDOFF #36). After 150 ms of cursor stability
+  // on a given cell, runs PS.solveOnePoint at the exact hovered parameters
+  // (warm-started from cachedPhi) and swaps the mini-canvas to the
+  // freshly-solved φ if successful.
+  const LIVE_SOLVE_SETTLE_MS = 150;
+  function scheduleLiveSolve(cellInfo, cachedPhi, statusEl, canvas) {
+    cancelLiveSolve();
+    const ls = sliceState.liveSolve;
+    const cellKey = cellInfo.col + ',' + cellInfo.row;
+    // If the live-solved φ for THIS cell is already on the mini-canvas
+    // from a prior solve, skip — no need to resolve.
+    if (ls.lastCellKey === cellKey && ls.lastPhi) {
+      _drawMiniBoundary(canvas, ls.lastPhi);
+      if (statusEl) { statusEl.textContent = '✓ live solve'; statusEl.style.color = '#3d8b5a'; }
+      return;
+    }
+    if (statusEl) {
+      statusEl.textContent = cachedPhi ? '≈ cached' : '(no cache)';
+      statusEl.style.color = '#888';
+    }
+    const myToken = ++ls.token;
+    ls.timer = setTimeout(() => {
+      ls.timer = null;
+      if (sliceState.liveSolve.token !== myToken) return;   // superseded
+      runLiveSolve(cellInfo, cachedPhi, myToken, statusEl, canvas, cellKey);
+    }, LIVE_SOLVE_SETTLE_MS);
+  }
+
+  function runLiveSolve(cellInfo, cachedPhi, myToken, statusEl, canvas, cellKey) {
+    const scenario = sliceState.lastScenario;
+    if (!scenario || !sliceState.lastAxes) return;
+    if (statusEl) { statusEl.textContent = '(solving…)'; statusEl.style.color = '#888'; }
+    // Build the param-assignment array exactly like loadPixel + the worker
+    // dispatch path. solveOnePoint clones the scenario internally and
+    // applies these via PS.applyParamInPlace.
+    const point = [
+      { ref: sliceState.lastAxes[0].ref, value: cellInfo.xVal },
+    ];
+    if (sliceState.lastAxes[1]) {
+      point.push({ ref: sliceState.lastAxes[1].ref, value: cellInfo.yVal });
+    }
+    // Warm hint: clone the cached φ so the solver can mutate w0/c/q in
+    // place without polluting the cache. _coarseIter isn't carried —
+    // it's a render-loop optimisation, not relevant for a one-off solve.
+    const warmHint = cachedPhi ? Object.assign({}, cachedPhi) : null;
+    // Need to pass a scenario that owns opts (lastScenario from
+    // snapshotScenario doesn't include opts). Reuse the same opts the
+    // last render used so quality / Newton settings match.
+    const sceneWithOpts = Object.assign({}, scenario, { opts: sliceState.lastOpts || {} });
+    // Pass the scenario's family tag so a PQD/LQD warm hint can actually
+    // warm-start (the grid path does the same via _attachFamilyTag). With
+    // `undefined` here, only classical hints (also family===undefined) ever
+    // matched, so weighted-family hovers fell back to a cold solve.
+    const expectedFamilyTag = (PS.MODE_FAMILY_TAG && scenario.mode)
+      ? PS.MODE_FAMILY_TAG[scenario.mode] : undefined;
+    let r;
+    try {
+      r = PS.solveOnePoint(sceneWithOpts, point, warmHint, expectedFamilyTag);
+    } catch (e) {
+      r = { cls: 'unclassified', errSample: String(e && e.message || e) };
+    }
+    if (sliceState.liveSolve.token !== myToken) return;   // superseded
+    if (r.cls === PS.CLASS_VALID && r.phiSerialized) {
+      sliceState.liveSolve.lastPhi = r.phiSerialized;
+      sliceState.liveSolve.lastCellKey = cellKey;
+      // Invalidate the identity-keyed sample cache so the new φ renders.
+      sliceState.miniCache = { phi: null, pts: null };
+      _drawMiniBoundary(canvas, r.phiSerialized);
+      if (statusEl) {
+        statusEl.textContent = '✓ live solve · ' + (r.iterations | 0) + ' iters';
+        statusEl.style.color = '#3d8b5a';
+      }
+    } else {
+      // Solve failed — keep the cached preview. Show the failure class so
+      // the user understands why the live result isn't being used.
+      const lbl = PS.CLASS_LABELS[r.cls] || r.cls || 'failed';
+      if (statusEl) {
+        statusEl.textContent = 'live: ' + lbl;
+        statusEl.style.color = '#a66';
+      }
+    }
   }
 
   function _clearMiniCanvas(canvas) {
@@ -782,6 +884,10 @@
     sliceState.lastImageData = img;
     sliceState.lastAxes      = axes;
     sliceState.lastScenario  = { ...snap, mode: snap.mode };
+    // HANDOFF #36: persist the render's opts so the live-solve hover
+    // preview can reuse the same Quality settings (univalenceSamples,
+    // identityTol, etc.) when running its one-off solves.
+    sliceState.lastOpts      = baseScenario.opts;
     sliceState.lastTiles     = new Array(axes[axes.length === 2 ? 1 : 0].n).fill(null);
     paintImage(img);
 
@@ -906,251 +1012,14 @@
   // Refinement-trigger knob — change here to tune visible blockiness vs
   // sample count. 8 iters ≈ a ~10–15% perceived brightness shift in the
   // VALID-class colormap.
-  const REFINE_ITER_DELTA = 8;
   // Mini-canvas boundary-sample count (HANDOFF #35). 128 is indistinguishable
   // from the inverse tab's 512+ render at 160×160 px; bump if jagged edges
   // are visible on high-DPR displays.
   const MINI_BOUNDARY_SAMPLES = 128;
 
-  async function runAdaptive2D({ pool, baseScenario, mode, axes, xs, ys, n0, n1,
-                                 paintCellBlock, paintImage, logErrorSamples,
-                                 cancelToken, onProgress }) {
-    // Persistent grid state — classification index + iteration count per cell.
-    // Stored on sliceState (HANDOFF #33) so the hover-tooltip and the
-    // Hovered-QD preview card can read them after the render completes.
-    const classGrid = new Uint8Array(n0 * n1).fill(PS.UNKNOWN_CLASS);
-    const iterGrid  = new Uint8Array(n0 * n1);
-    sliceState.classGrid = classGrid;
-    sliceState.iterGrid  = iterGrid;
-    sliceState.gridDims  = { n0, n1 };
-    // HANDOFF #35 race fix: invalidate the φ cache *immediately* when the
-    // new grid dims are published, not 90 lines later when the new
-    // nearestPhi closure is wired up. Otherwise the hover handler can briefly
-    // read stale φs from the previous render via the still-live old closure.
-    sliceState.nearestPhi = function () { return null; };
-    sliceState.miniCache = { phi: null, pts: null };
-
-    // Warm-hint spatial index: bucket the grid into ~16×16 buckets so
-    // nearestPhi(c, r) is O(1) amortized instead of O(N).
-    //
-    // Each bucket holds an array of {c, r, phi} entries. Querying looks at
-    // the 9 neighboring buckets (the home bucket + 8 neighbors); good
-    // enough for nearest-neighbor since adjacent cells are guaranteed
-    // within one bucket-width.
-    const BUCKETS_PER_AXIS = 16;
-    const bucketW = Math.max(1, Math.ceil(n0 / BUCKETS_PER_AXIS));
-    const bucketH = Math.max(1, Math.ceil(n1 / BUCKETS_PER_AXIS));
-    const bucketCols = Math.ceil(n0 / bucketW);
-    const bucketRows = Math.ceil(n1 / bucketH);
-    const phiBuckets = new Array(bucketCols * bucketRows);
-    for (let i = 0; i < phiBuckets.length; i++) phiBuckets[i] = [];
-    let phiCacheSize = 0;
-    const PHI_CACHE_CAP = 4096;
-
-    function bucketIdx(c, r) {
-      const bc = Math.min(bucketCols - 1, Math.max(0, Math.floor(c / bucketW)));
-      const br = Math.min(bucketRows - 1, Math.max(0, Math.floor(r / bucketH)));
-      return br * bucketCols + bc;
-    }
-    function insertPhi(c, r, phi, iterCount) {
-      phiBuckets[bucketIdx(c, r)].push({ c, r, phi, iterCount: iterCount | 0 });
-      phiCacheSize++;
-      // Evict half the cache uniformly when it overflows. Eviction is rare
-      // and the spatial distribution roughly stays intact.
-      if (phiCacheSize > PHI_CACHE_CAP) {
-        for (let i = 0; i < phiBuckets.length; i++) {
-          const b = phiBuckets[i];
-          if (b.length > 4) b.splice(0, b.length >> 1);
-        }
-        phiCacheSize = 0;
-        for (let i = 0; i < phiBuckets.length; i++) phiCacheSize += phiBuckets[i].length;
-      }
-    }
-
-    // Choose the coarsest stride: a power of 2 ≤ min(n0,n1)/8, capped so we
-    // don't degenerate to "sample every cell" on very small grids.
-    let stride = 1;
-    while ((stride << 1) <= Math.min(n0, n1) / 4) stride <<= 1;
-    stride = Math.max(1, stride);
-    const startStride = stride;
-
-    // Estimate total work for progress reporting.
-    const totalCellsAtFineGrid = n0 * n1;
-    let cellsDone = 0;
-
-    function nearestPhi(c, r) {
-      // Scan the 9 buckets around (c, r). Each holds O(K) cached φs where
-      // K ≈ PHI_CACHE_CAP / (BUCKETS_PER_AXIS^2) ≈ 16. Total ~144 distance
-      // comparisons regardless of cache size — vs O(N) for a flat scan.
-      //
-      // Returns the nearest cached entry as { phi, iterCount } or null.
-      // The iterCount lets the solver speculatively tighten its Newton
-      // maxIter cap for the refined sub-pixel (see param-slice-common.js
-      // `_solveScenarioBody`).
-      if (phiCacheSize === 0) return null;
-      const bc = Math.floor(c / bucketW);
-      const br = Math.floor(r / bucketH);
-      let best = null, bestD = Infinity;
-      for (let dbr = -1; dbr <= 1; dbr++) {
-        const brI = br + dbr;
-        if (brI < 0 || brI >= bucketRows) continue;
-        for (let dbc = -1; dbc <= 1; dbc++) {
-          const bcI = bc + dbc;
-          if (bcI < 0 || bcI >= bucketCols) continue;
-          const b = phiBuckets[brI * bucketCols + bcI];
-          for (let i = 0; i < b.length; i++) {
-            const p = b[i];
-            const d = (p.c - c) * (p.c - c) + (p.r - r) * (p.r - r);
-            if (d < bestD) { bestD = d; best = p; }
-          }
-        }
-      }
-      // Fallback: if no neighbor bucket had anything (e.g. very sparse
-      // valid region), do one full scan as a last resort. This is rare in
-      // practice because the coarsest pass populates many cells uniformly.
-      if (!best) {
-        for (let i = 0; i < phiBuckets.length; i++) {
-          const b = phiBuckets[i];
-          for (let j = 0; j < b.length; j++) {
-            const p = b[j];
-            const d = (p.c - c) * (p.c - c) + (p.r - r) * (p.r - r);
-            if (d < bestD) { bestD = d; best = p; }
-          }
-        }
-      }
-      return best ? { phi: best.phi, iterCount: best.iterCount } : null;
-    }
-    // Expose for the hover-tooltip + Hovered-QD preview card (HANDOFF #33).
-    sliceState.nearestPhi = nearestPhi;
-
-    function paintAtStride(s) {
-      // For each cell of stride s whose corners agree (in class AND, for
-      // VALID, in iter count to within REFINE_ITER_DELTA), fill the whole
-      // pixel block with the top-left-corner color. Cells that fail this
-      // test will be subdivided in the next refinement pass and their
-      // sub-cells painted then; deferring keeps the coarse paint from
-      // committing to a misleading top-left iter count for a whole block.
-      for (let r = 0; r < n1; r += s) {
-        for (let c = 0; c < n0; c += s) {
-          const blockCols = Math.min(s, n0 - c);
-          const blockRows = Math.min(s, n1 - r);
-          const k = classGrid[r * n0 + c];
-          if (k === PS.UNKNOWN_CLASS) continue;
-          const homog = (s === 1) || PS.cellIsHomogeneous(
-            classGrid, iterGrid, n0, n1, c, r, s,
-            { iterDelta: REFINE_ITER_DELTA });
-          if (homog) {
-            const color = PS.colorFor({ cls: PS.IDX_TO_CLASS[k], iterations: iterGrid[r * n0 + c] });
-            paintCellBlock(c, r, blockCols, blockRows, color);
-          }
-        }
-      }
-    }
-
-    function storeResults(points, results) {
-      logErrorSamples(results);
-      for (let i = 0; i < results.length; i++) {
-        const { c, r } = points[i];
-        const idx = r * n0 + c;
-        const cls = results[i].cls;
-        const iters = Math.min(255, results[i].iterations || 0);
-        classGrid[idx] = PS.CLASS_TO_IDX[cls];
-        iterGrid[idx]  = iters;
-        if (results[i].phiSerialized) {
-          insertPhi(c, r, results[i].phiSerialized, iters);
-        }
-      }
-    }
-
-    function buildParams(points) {
-      return points.map(({ c, r }) => [
-        { ref: axes[0].ref, value: xs[c] },
-        { ref: axes[1].ref, value: ys[r] },
-      ]);
-    }
-
-    function dispatchPoints(points) {
-      const params = buildParams(points);
-      // Build per-point warm hints by looking up the nearest cached φ from
-      // a previous pass. Wrap each hit with `_coarseIter` so the solver can
-      // speculatively tighten its Newton maxIter cap. The wrapper is a
-      // shallow copy of the φ — the underlying phi object is not mutated
-      // (it gets cloned again inside `_solveScenarioBody` via QD.clonePhi).
-      const hints = points.map(({ c, r }) => {
-        const hit = nearestPhi(c, r);
-        if (!hit) return null;
-        return Object.assign({}, hit.phi, { _coarseIter: hit.iterCount });
-      });
-      return pool.solveBatch(baseScenario, mode, params, hints);
-    }
-
-    // --- Coarse pass: sample every (stride * k, stride * k) corner.
-    const coarsePoints = [];
-    for (let r = 0; r < n1; r += startStride) {
-      for (let c = 0; c < n0; c += startStride) {
-        coarsePoints.push({ c, r });
-      }
-    }
-    // Also ensure the right + bottom boundary corners are evaluated so the
-    // cornersAgree check at later passes has well-defined neighbors.
-    const includeEdge = (c, r) => {
-      if (classGrid[r * n0 + c] === PS.UNKNOWN_CLASS &&
-          !coarsePoints.some(p => p.c === c && p.r === r)) {
-        coarsePoints.push({ c, r });
-      }
-    };
-    for (let r = 0; r < n1; r += startStride) includeEdge(n0 - 1, r);
-    for (let c = 0; c < n0; c += startStride) includeEdge(c, n1 - 1);
-    includeEdge(n0 - 1, n1 - 1);
-
-    if (cancelToken.cancelled) return;
-    const t0 = performance.now();
-    const coarseResults = await dispatchPoints(coarsePoints);
-    if (cancelToken.cancelled || !coarseResults) return;
-    storeResults(coarsePoints, coarseResults);
-    cellsDone += coarsePoints.length;
-    paintAtStride(startStride);
-    paintImage();
-    onProgress(cellsDone, totalCellsAtFineGrid);
-    console.log(`[param-slice] coarse pass: ${coarsePoints.length} samples in ${((performance.now()-t0)/1000).toFixed(2)}s`);
-
-    // --- Refinement passes: stride/2 down to 1.
-    while (stride > 1) {
-      if (cancelToken.cancelled) return;
-      const halfStride = stride >> 1;
-      // Collect new sample points within cells whose corners disagree.
-      const newPoints = [];
-      const seen = new Set();
-      for (let r = 0; r + stride < n1; r += stride) {
-        for (let c = 0; c + stride < n0; c += stride) {
-          if (PS.cellIsHomogeneous(classGrid, iterGrid, n0, n1, c, r, stride,
-                                   { iterDelta: REFINE_ITER_DELTA })) continue;
-          const subPts = PS.subdivisionPoints(c, r, stride, n0, n1);
-          for (const p of subPts) {
-            const key = p.r * n0 + p.c;
-            if (classGrid[key] === PS.UNKNOWN_CLASS && !seen.has(key)) {
-              newPoints.push(p);
-              seen.add(key);
-            }
-          }
-        }
-      }
-      if (newPoints.length === 0) {
-        stride = halfStride;
-        continue;
-      }
-      const tLevel = performance.now();
-      const results = await dispatchPoints(newPoints);
-      if (cancelToken.cancelled || !results) return;
-      storeResults(newPoints, results);
-      cellsDone += newPoints.length;
-      paintAtStride(halfStride);
-      paintImage();
-      onProgress(cellsDone, totalCellsAtFineGrid);
-      console.log(`[param-slice] stride=${halfStride}: ${newPoints.length} samples in ${((performance.now()-tLevel)/1000).toFixed(2)}s`);
-      stride = halfStride;
-    }
-  }
+  // Adaptive 2-D render engine (runAdaptive2D + the warm-hint spatial index +
+  // coverage fill) -> param-slice-render.js (Phase-3 item E). Installed near the
+  // end of this file over a shared psCtx; startRun calls the captured name.
 
   // Sample an axis range into n evenly-spaced values.
   function sampleAxis(axis) {
@@ -1168,7 +1037,19 @@
     // doesn't show a QD from the aborted render.
     sliceState.nearestPhi = function () { return null; };
     sliceState.miniCache = { phi: null, pts: null };
+    // HANDOFF #36: cancel any pending live-solve.
+    cancelLiveSolve();
     setProgress('Cancelled.');
+  }
+
+  // Cancel any pending live-solve and invalidate any in-flight solve
+  // (via the token counter). HANDOFF #36.
+  function cancelLiveSolve() {
+    const ls = sliceState.liveSolve;
+    if (ls.timer) { clearTimeout(ls.timer); ls.timer = null; }
+    ls.token++;
+    ls.lastPhi = null;
+    ls.lastCellKey = null;
   }
 
   function readAxis(which) {
@@ -1207,4 +1088,9 @@
     sliceState.pool = await sliceState.poolPromise;
     return sliceState.pool;
   }
+  // Install the Phase-3 adaptive render engine (param-slice-render.js). psCtx
+  // carries the shared sliceState + the cancelLiveSolve host hook; runAdaptive2D
+  // reads everything else off its options arg + the ParamSlice/PS global.
+  ({ runAdaptive2D } = window.QD_UI.installParamSliceRender({ sliceState, cancelLiveSolve }));
+
 })(typeof window !== 'undefined' ? window : globalThis);

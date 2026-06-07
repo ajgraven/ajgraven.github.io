@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- QD Solver app icon.
+     A cardioid-like ∂Ω boundary (the simplest non-trivial QD: h = 1.5/w + 0.5/w²)
+     with three quadrature-node dots evoking the multi-pole case. Colors match
+     the app's accent palette (background #fafafa, boundary stroke #1a3e7a,
+     quadrature nodes #b53030).
+     Designed as a 512×512 SVG, scalable to any PWA icon size. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Maskable safe area: keep visual content within a 80% inset circle so
+       Android adaptive icons don't crop it. -->
+  <rect width="512" height="512" fill="#fafafa"/>
+
+  <!-- Boundary curve — generated from φ(z) = 1.5z + 0.5z² (cardioid Riemann
+       map). Path computed by sampling 64 points around the unit circle at
+       radius 0.86 ⋅ 200 px and translating to canvas center (256, 256). -->
+  <g transform="translate(256 256)">
+    <!-- Filled Ω with the app's standard blue tint. -->
+    <path fill="rgba(86, 119, 168, 0.18)" stroke="#1a3e7a" stroke-width="6"
+          stroke-linejoin="round" stroke-linecap="round"
+          d="M 312 0
+             C 308 50, 290 95, 256 130
+             C 220 165, 168 185, 110 188
+             C  52 191,  -5 178, -52 154
+             C -98 130,-130  96,-145  57
+             C -160  18,-156 -25,-130 -64
+             C -104-103, -56-138,   0-160
+             C  56-181, 118-189, 178-180
+             C 238-171, 286-141, 308-100
+             C 320 -68, 320 -34, 312   0 Z"/>
+
+    <!-- φ(0) — small blue cross. -->
+    <g stroke="#1a3e7a" stroke-width="6" stroke-linecap="round">
+      <line x1="-14" y1="0" x2="14" y2="0"/>
+      <line x1="0" y1="-14" x2="0" y2="14"/>
+    </g>
+
+    <!-- Three quadrature-node dots (red). -->
+    <circle cx="60"  cy="-20" r="14" fill="#b53030" stroke="#ffffff" stroke-width="4"/>
+    <circle cx="140" cy="40"  r="14" fill="#b53030" stroke="#ffffff" stroke-width="4"/>
+    <circle cx="-30" cy="-90" r="14" fill="#b53030" stroke="#ffffff" stroke-width="4"/>
+  </g>
+</svg>

@@ -59,43 +59,24 @@
 
   // ===========================================================================
   // Polynomial-in-w helpers (ascending-power Complex[]).
+  // Generic dense-polynomial arithmetic lives in poly-helpers.js (QD.Poly,
+  // code-review CR3). parse-h trims trailing near-zero coefficients after add
+  // and mul (to keep degrees minimal for the parser); QD.Poly's primitives do
+  // NOT trim, so we compose QD.Poly.trim here to preserve the exact historical
+  // behavior. polyDivMod / polyShift / seriesDivide stay local — they're
+  // parse-specific and not duplicated elsewhere.
   // ===========================================================================
-  function polyZero()           { return [{ re: 0, im: 0 }]; }
-  function polyOne()            { return [{ re: 1, im: 0 }]; }
-  function polyConst(c)         { return [{ re: c.re, im: c.im }]; }
-  function polyVar()            { return [{ re: 0, im: 0 }, { re: 1, im: 0 }]; }      // w
-  function polyTrim(p) {
-    while (p.length > 1 && Math.hypot(p[p.length - 1].re, p[p.length - 1].im) < 1e-14) p.pop();
-    return p;
-  }
-  function polyAdd(a, b) {
-    const n = Math.max(a.length, b.length);
-    const out = new Array(n);
-    for (let i = 0; i < n; i++) {
-      const av = i < a.length ? a[i] : { re: 0, im: 0 };
-      const bv = i < b.length ? b[i] : { re: 0, im: 0 };
-      out[i] = C.add(av, bv);
-    }
-    return polyTrim(out);
-  }
-  function polyNeg(a) { return a.map(c => C.neg(c)); }
-  function polyMul(a, b) {
-    if (a.length === 0 || b.length === 0) return polyZero();
-    const out = new Array(a.length + b.length - 1);
-    for (let i = 0; i < out.length; i++) out[i] = { re: 0, im: 0 };
-    for (let i = 0; i < a.length; i++) {
-      for (let j = 0; j < b.length; j++) {
-        out[i + j] = C.add(out[i + j], C.mul(a[i], b[j]));
-      }
-    }
-    return polyTrim(out);
-  }
-  function polyScale(a, s) { return a.map(c => C.mul(c, s)); }
-  function polyPow(a, n) {
-    let out = polyOne();
-    for (let i = 0; i < n; i++) out = polyMul(out, a);
-    return out;
-  }
+  if (!QD.Poly) throw new Error("parse-h.js: QD.Poly not found — poly-helpers.js must load first");
+  const Poly = QD.Poly;
+  const polyZero  = Poly.zero;
+  const polyOne   = Poly.one;
+  const polyVar   = Poly.variable;                       // w
+  const polyTrim  = Poly.trim;
+  const polyNeg   = Poly.neg;
+  const polyScale = Poly.scale;
+  const polyAdd   = (a, b) => Poly.trim(Poly.add(a, b)); // trimming add (parse-h semantics)
+  const polyMul   = (a, b) => Poly.trim(Poly.mul(a, b)); // trimming mul (parse-h semantics)
+  const polyPow   = (a, n) => { let out = Poly.one(); for (let i = 0; i < n; i++) out = polyMul(out, a); return out; };
   // Long-divide P / Q → { quotient, remainder } so that P = quotient*Q + remainder.
   function polyDivMod(P, Q) {
     P = P.slice(); Q = polyTrim(Q.slice());

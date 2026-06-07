@@ -184,59 +184,21 @@
   }
 
   // ===========================================================================
-  // 5. Initial guesses
+  // 5. Initial guesses — moved to solvers/seeds/seeds-qd.js (A6 split)
   // ===========================================================================
-  function diskInitialGuess_QD(hData, w0, scale = null) {
-    const n = hData.poles.length;
-
-    let totalC = 0;
-    for (const p of hData.poles) {
-      if (p.principal.length > 0) totalC += Complex.abs(p.principal[0]);
-    }
-    if (totalC === 0) totalC = 1;
-    let R = scale !== null ? scale : Math.sqrt(totalC);
-    let maxR = 0;
-    for (const p of hData.poles) {
-      const d = Complex.abs(Complex.sub(p.a, w0));
-      if (d > maxR) maxR = d;
-    }
-    if (R < 1.5 * maxR) R = 1.5 * maxR;
-    if (R === 0) R = 1;
-
-    const phi = { unbounded: false, w0: Complex.clone(w0), c: undefined, branches: [] };
-    for (let j = 0; j < n; j++) {
-      const z = Complex.scale(Complex.sub(hData.poles[j].a, w0), 1 / R);
-      const A = [];
-      const mj = hData.poles[j].principal.length;
-      let Rk = 1;
-      for (let k = 1; k <= mj; k++) {
-        Rk *= R;
-        A.push(Complex.scale(hData.poles[j].principal[k - 1], 1 / Rk));
-      }
-      phi.branches.push({ z, A });
-    }
-    return phi;
+  // Seed-strategy functions for Family.boundedQD live in
+  // app/solvers/seeds/seeds-qd.js and attach to QD.Seeds.boundedQD. The
+  // kernel here references them by name where needed (continuationSolve_QD
+  // and the Family.boundedQD record below). This file remains responsible
+  // for math (evalPhi, phiTaylor, residual, identity verification).
+  //
+  // This split is the template for the other 5 families; see CONTRIBUTING.md
+  // for the recipe.
+  if (!QD.Seeds || !QD.Seeds.boundedQD) {
+    throw new Error("solver-qd.js: QD.Seeds.boundedQD missing — seeds-qd.js must be loaded first");
   }
-
-  function perturbedInitialGuess_QD(hData, w0, rng, r = 0) {
-    const base = diskInitialGuess_QD(hData, w0);
-    const sigma = 0.15 + 0.25 * r;
-    for (const br of base.branches) {
-      br.z = {
-        re: br.z.re + sigma * (rng() - 0.5),
-        im: br.z.im + sigma * (rng() - 0.5),
-      };
-      const rr = Math.hypot(br.z.re, br.z.im);
-      if (rr > 0.9) { br.z.re *= 0.85 / rr; br.z.im *= 0.85 / rr; }
-      for (let k = 0; k < br.A.length; k++) {
-        br.A[k] = {
-          re: br.A[k].re * (1 + sigma * (rng() - 0.5)),
-          im: br.A[k].im + sigma * (rng() - 0.5),
-        };
-      }
-    }
-    return base;
-  }
+  const diskInitialGuess_QD      = QD.Seeds.boundedQD.initialGuess;
+  const perturbedInitialGuess_QD = QD.Seeds.boundedQD.perturbedInitialGuess;
 
   // ===========================================================================
   // 6. Continuation (homotopy in pole distance)

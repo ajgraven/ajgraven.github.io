@@ -2,10 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Quadrature Domain Solver</title>
   <link rel="stylesheet" href="style.css">
+  <!-- PWA: manifest + icon. Service-worker registration is at the bottom of
+       the <body> so the static-script pipeline gets a chance to set up first. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <meta name="theme-color" content="#5677a8">
+
   <!-- math.js for any user-facing complex arithmetic needs in the future -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.1/math.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.1/math.js"
+          integrity="sha384-u7NVJRP+LoHaUk6TkyQVNWO4E5yTtyJv/F1tKpQonoXMMjbxVQ0+B2ihDnrOKrCZ"
+          crossorigin="anonymous"></script>
   <!-- KaTeX for typeset math in the Riemann-map card -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
         integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+"
@@ -19,7 +28,12 @@
 
   <!-- ============== LEFT: CONTROLS ============== -->
   <aside id="controls">
-    <h1>Quadrature Domain Solver</h1>
+    <div class="app-header-row" style="display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin:0 0 12px 0;">
+      <h1 style="margin:0;">Quadrature Domain Solver</h1>
+      <!-- Copy-link button is appended here by ui.js (reuses QD.QoL.copyButton +
+           the live URL-hash state); shares the whole configuration incl. tab. -->
+      <span id="copy-link-host"></span>
+    </div>
 
     <!-- Tab bar: QD/LQD (inverse) and Direct problem (given φ → h).
          Tab panels are siblings below. The AQD tab is deferred to a future
@@ -29,6 +43,9 @@
       <button class="tab-btn"        data-tab="schwarz" role="tab" aria-selected="false">Schwarz dynamics</button>
       <button class="tab-btn"        data-tab="param-slice" role="tab" aria-selected="false">Parameter slice</button>
     </div>
+    <!-- Item 7: one-line subtitle clarifying each tab + that they share one
+         solved domain. Set by updateTabSubtitle() in ui.js on tab-changed. -->
+    <div id="tab-subtitle" class="hint" style="margin:-4px 0 10px;"></div>
 
     <!-- ============== TAB 1: QD (inverse + direct, view-toggled) ============== -->
     <!-- HANDOFF #30: the standalone "Direct problem" tab was folded into this
@@ -44,89 +61,76 @@
     <section class="card" id="domain-mode-card">
       <h2>Domain type</h2>
 
-      <div class="domain-mode-group">
-        <div class="domain-mode-group-label">Classical QD</div>
-        <div class="row">
-          <label><input type="radio" name="domain-mode" value="bounded" checked> Bounded</label>
-          <label style="margin-left:14px;"><input type="radio" name="domain-mode" value="unbounded"> Unbounded</label>
+      <!-- Compact 3-axis domain selector: weight × bounded/unbounded × singular.
+           The three controls drive setMode() via composeMode() (ui.js); the
+           full 10 modes = {Classical | Power α | Log} × {Bounded | Unbounded} ×
+           {singular}, with Classical having NO singular variant (checkbox is
+           disabled when Weight = Classical). syncDomainModeControl() keeps these
+           in sync when the mode is set programmatically (auto-switch / preset /
+           URL restore). -->
+      <div class="row" style="margin-bottom:6px; align-items:center;">
+        <span class="domain-mode-group-label" style="width:52px; margin:0;">Weight</span>
+        <div class="segmented" id="dm-weight" role="group" aria-label="Weight class">
+          <button type="button" class="seg-btn active" data-weight="classical" data-str-title="tooltips.weightQD">QD</button>
+          <button type="button" class="seg-btn" data-weight="pqd" data-str-title="tooltips.weightPQD">PQD</button>
+          <button type="button" class="seg-btn" data-weight="lqd" data-str-title="tooltips.weightLQD">LQD</button>
         </div>
+      </div>
+      <div class="row" style="margin-bottom:6px; align-items:center;">
+        <span class="domain-mode-group-label" style="width:52px; margin:0;">Domain</span>
+        <div class="segmented" id="dm-domain" role="group" aria-label="Domain extent">
+          <button type="button" class="seg-btn active" data-domain="bounded">Bounded</button>
+          <button type="button" class="seg-btn" data-domain="unbounded">Unbounded</button>
+        </div>
+      </div>
+      <label class="row" style="margin:0 0 2px; gap:6px;">
+        <!-- disabled by default: the initial mode is classical QD, which has no
+             singular variant. syncDomainModeControl() re-enables it for PQD/LQD. -->
+        <input type="checkbox" id="dm-singular" disabled> singular (0 ∈ Ω)
+      </label>
+      <!-- Item 5: plain-language "what you're solving" line, set by applyModeVisuals. -->
+      <div class="hint" id="dm-summary" style="margin-top:4px;"></div>
+
+      <!-- Explicit Riemann map φ(z) of the solved domain (moved here from the
+           on-plot status panel). The numerical closed form is shown inline; the
+           symbolic identity is revealed by the "?" toggle. The conformal-radius
+           control (#c-card) is relocated directly below this at init (ui.js),
+           and shows only for unbounded modes. Hidden until a solve succeeds.
+           The <hr> separates the mode selector from the solved-map display. -->
+      <hr class="dm-sep">
+      <div id="dm-riemann" class="hidden">
+        <div class="dm-riemann-label">
+          <span class="domain-mode-group-label" style="margin:0;">Riemann map φ(z)</span>
+          <button type="button" id="dm-riemann-sym-toggle" class="help-btn"
+                  data-str-title="tooltips.riemannSym">?</button>
+        </div>
+        <div id="dm-riemann-sym" class="rm-sym hidden"></div>
+        <div id="dm-riemann-numer" class="rm-numer"></div>
       </div>
 
-      <div class="domain-mode-group">
-        <div class="domain-mode-group-label">Log-weighted QD (LQD)</div>
-        <div class="row">
-          <label><input type="radio" name="domain-mode" value="lqd-bounded"> Bounded</label>
-          <label style="margin-left:14px;"><input type="radio" name="domain-mode" value="lqd-bounded-singular"> Bounded singular</label>
-        </div>
-        <div class="row">
-          <label><input type="radio" name="domain-mode" value="lqd-unbounded"> Unbounded</label>
-          <label style="margin-left:14px;"><input type="radio" name="domain-mode" value="lqd-unbounded-singular"> Unbounded singular</label>
-        </div>
-      </div>
-      <div class="hint" id="lqd-hint" style="display:none; margin-top:6px;">
-        Log-weighted QD: <code>∫<sub>Ω</sub> f(w)/|w|² dA = ∮<sub>∂Ω</sub> f·h dw</code>.
-        Non-singular only: requires <code>0 ∉ Ω̄</code>, so <code>w₀ = φ(0)</code> must be nonzero.
-      </div>
-      <div class="hint" id="lqd-singular-hint" style="display:none; margin-top:6px;">
-        Singular log-weighted QD: <code>0 ∈ Ω</code>; test functions
-        <code>f ∈ L¹<sub>a</sub>(Ω; ρ₀)</code> automatically vanish at 0. Riemann map
-        factors as <code>φ(z) = γ · b<sub>z₀</sub>(z) · exp(r#(z))</code>. The pole of
-        <code>h</code> at the origin contributes residue <code>q</code> (complex);
-        <code>q = 0</code> is the degenerate case with no log-charge.
-      </div>
-      <div class="hint" id="lqd-unbounded-hint" style="display:none; margin-top:6px;">
-        Unbounded non-singular log-weighted QD: <code>0 ∉ Ω̄</code>, <code>∞ ∈ Ω</code>;
-        test functions <code>f ∈ L¹<sub>a</sub>(Ω; ρ₀)</code> vanish at <code>∞</code>.
-        Riemann map: <code>φ(z) = c·z · exp(r#(z) − r#(∞))</code> on <code>𝔻*</code>,
-        with conformal radius <code>c = φ′(∞)</code>. The <code>− r#(∞)</code>
-        subtraction pins the leading coefficient at ∞ to exactly <code>c</code>.
-      </div>
-      <div class="hint" id="lqd-unbounded-singular-hint" style="display:none; margin-top:6px;">
-        Unbounded singular log-weighted QD: <code>0 ∈ Ω</code> AND <code>∞ ∈ Ω</code>;
-        test functions <code>f</code> vanish at BOTH 0 and ∞ (e.g.
-        <code>w/(w−b)<sup>k</sup></code> for <code>k ≥ 2</code>, <code>b ∈ K</code>).
-        Riemann map: <code>φ(z) = c·|z₀|·z·b<sub>z₀</sub>(z) · exp(r#(z) − r#(∞))</code>
-        with <code>z₀ ∈ 𝔻*</code> the preimage of 0, and <code>q</code> (complex)
-        the residue of <code>h</code> at the origin. <code>q = 0</code> is the
-        degenerate case with no log-charge.
-      </div>
-    </section>
+      <div class="hint" id="pqd-hint" style="display:none; margin-top:6px;" data-str-html="familyHints.pqdBounded"></div>
+      <div class="hint" id="pqd-singular-hint" style="display:none; margin-top:6px;" data-str-html="familyHints.pqdBoundedSingular"></div>
+      <div class="hint" id="pqd-unbounded-hint" style="display:none; margin-top:6px;" data-str-html="familyHints.pqdUnbounded"></div>
+      <div class="hint" id="pqd-unbounded-singular-hint" style="display:none; margin-top:6px;" data-str-html="familyHints.pqdUnboundedSingular"></div>
 
-    <!-- Singular-LQD charge q. Visible only in lqd-bounded-singular mode. -->
-    <section class="card hidden" id="q-card">
-      <h2>Residue q at origin</h2>
-      <div class="hint">
-        Complex residue of <code>h</code> at the simple pole at <code>w = 0</code>
-        (the singular pole inside Ω). Dial via text or the |q| / arg(q) sliders.
-      </div>
-      <div class="row">
-        <label>q =
-          <input type="text" class="cnum" id="q-manual" value="0">
-        </label>
-      </div>
-      <div class="slider1d-row" style="margin-left: 0;">
-        <label>|q|</label>
-        <input type="range" id="q-mag-slider" class="slider1d"
-               min="0" max="3" step="any" value="0">
-        <span class="slider1d-val" id="q-mag-val">0.000</span>
-      </div>
-      <div class="slider1d-row" style="margin-left: 0;">
-        <label>arg</label>
-        <input type="range" id="q-arg-slider" class="slider1d"
-               min="-3.14159265" max="3.14159265" step="any" value="0">
-        <span class="slider1d-val" id="q-arg-val">0.000π</span>
-      </div>
+      <div class="hint" id="lqd-hint" style="display:none; margin-top:6px;" data-str-html="familyHints.lqdBounded"></div>
+      <div class="hint" id="lqd-singular-hint" style="display:none; margin-top:6px;" data-str-html="familyHints.lqdSingular"></div>
+      <div class="hint" id="lqd-unbounded-hint" style="display:none; margin-top:6px;" data-str-html="familyHints.lqdUnbounded"></div>
+      <div class="hint" id="lqd-unbounded-singular-hint" style="display:none; margin-top:6px;" data-str-html="familyHints.lqdUnboundedSingular"></div>
     </section>
 
     <section class="card" id="h-card">
       <h2>Quadrature function h(w)</h2>
-      <div class="hint">
-        h(w) = Σ<sub>j</sub> Σ<sub>s=1..m<sub>j</sub></sub> C<sub>j,s</sub> / (w − a<sub>j</sub>)<sup>s</sup>.
-        Enter complex values as e.g. <code>1+2i</code>.
-      </div>
+      <div class="hint" data-str-html="hints.hSum"></div>
+      <div class="hint" style="margin-bottom: 8px;" data-str-html="hints.newHere"></div>
       <div class="row" style="margin-bottom: 8px;">
         <label>Preset:
           <select id="preset-select" style="width: 240px;"></select>
+        </label>
+      </div>
+      <div class="row" style="margin-bottom: 8px;">
+        <label data-str-title="tooltips.thesisSelect">Thesis example:
+          <select id="thesis-select" style="width: 240px;"></select>
         </label>
       </div>
 
@@ -149,10 +153,7 @@
 
       <!-- Polynomial part of h (unbounded mode only). -->
       <div id="poly-part-section" class="hidden" style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #d8dbe0;">
-        <div class="hint">
-          Polynomial part of h(w) = Σ<sub>l=0..m<sub>∞</sub></sub> C<sub>∞,l</sub> w<sup>l</sup>.
-          Quadrature nodes at infinity.
-        </div>
+        <div class="hint" data-str-html="hints.polyPart"></div>
         <div class="row">
           <label>Degree m<sub>∞</sub>:
             <input type="number" id="poly-degree" min="-1" max="6" value="-1" style="width: 56px;">
@@ -163,37 +164,96 @@
       </div>
     </section>
 
-    <!-- Card #2A: bounded normalization (φ(0)) -->
-    <section class="card" id="w0-card">
-      <h2>Riemann map center φ(0)</h2>
-      <div class="row">
-        <label><input type="radio" name="w0mode" value="auto" checked> Centroid of poles</label>
+    <!-- Map parameters: the scalar gauge/weight knobs of the Riemann map,
+         merged from the former φ(0), PQD-α, and singular-LQD-q cards. Each row
+         group shows only in the modes that use it; applyModeVisuals() (ui.js)
+         toggles #map-alpha-rows / #map-w0-rows / #map-q-rows and the card itself
+         from desc.cards.{alpha,w0,q}. (The unbounded conformal radius c stays in
+         #c-card, shown beside the φ(z) display inside the Domain-type card.)
+         All inner element ids are preserved verbatim from the former cards. -->
+    <section class="card" id="map-params-card">
+      <h2>Map parameters</h2>
+
+      <!-- PQD power α (pqd-* modes). -->
+      <div id="map-alpha-rows" class="hidden">
+        <div class="domain-mode-group-label" style="margin:0 0 4px;">PQD power α</div>
+        <div class="row">
+          <label style="display: inline-flex; align-items: center; gap: 8px;">
+            α =
+            <input type="number" id="alpha-input" min="0.05" step="0.05" value="2"
+                   style="width: 80px;" aria-label="Power-weight exponent α">
+          </label>
+          <span style="margin-left: 10px;">
+            <button type="button" class="alpha-quick" data-alpha="0.5">½</button>
+            <button type="button" class="alpha-quick" data-alpha="2">2</button>
+            <button type="button" class="alpha-quick" data-alpha="3">3</button>
+          </span>
+        </div>
+        <div class="hint" style="margin-top: 6px;" data-str-html="hints.alpha"></div>
       </div>
-      <div class="row">
-        <label>
-          <input type="radio" name="w0mode" value="manual"> Manual:
-          <input type="text" class="cnum" id="w0-manual" value="0" disabled>
-        </label>
+
+      <!-- Riemann map center φ(0) (bounded families). -->
+      <div id="map-w0-rows">
+        <div class="domain-mode-group-label" style="margin:6px 0 4px;">Riemann map center φ(0)</div>
+        <div class="row">
+          <label><input type="radio" name="w0mode" value="auto" checked> Centroid of poles</label>
+        </div>
+        <div class="row">
+          <label>
+            <input type="radio" name="w0mode" value="manual"> Manual:
+            <input type="text" class="cnum" id="w0-manual" value="0" disabled aria-label="Riemann-map center w₀ = φ(0) (complex)">
+          </label>
+        </div>
+      </div>
+
+      <!-- Singular-LQD residue q at the origin (lqd-bounded-singular). -->
+      <div id="map-q-rows" class="hidden">
+        <div class="domain-mode-group-label" style="margin:6px 0 4px;">Residue q at origin</div>
+        <div class="hint" data-str-html="hints.qResidue"></div>
+        <div class="row">
+          <label>q =
+            <input type="text" class="cnum" id="q-manual" value="0" aria-label="Point-charge residue q at the origin (complex)">
+          </label>
+        </div>
+        <div class="slider1d-row" style="margin-left: 0;">
+          <label>|q|</label>
+          <input type="range" id="q-mag-slider" class="slider1d"
+                 min="0" max="3" step="any" value="0">
+          <span class="slider1d-val" id="q-mag-val">0.000</span>
+        </div>
+        <div class="slider1d-row" style="margin-left: 0;">
+          <label>arg</label>
+          <input type="range" id="q-arg-slider" class="slider1d"
+                 min="-3.14159265" max="3.14159265" step="any" value="0">
+          <span class="slider1d-val" id="q-arg-val">0.000π</span>
+        </div>
       </div>
     </section>
 
     <!-- Card #2B: unbounded normalization (conformal radius c) -->
     <section class="card hidden" id="c-card">
       <h2>Conformal radius c = φ&prime;(∞)</h2>
-      <div class="hint">
-        Unbounded QDs come in a one-parameter family. Sweep this slider to
-        explore it; past the critical c the simply-connected QD ceases to
-        exist (the solver will flag this).
-      </div>
+      <!-- Compact single row: short slider + the number input as the editable
+           readout (no separate value span). -->
       <div class="slider1d-row" style="margin-left: 0;">
         <label>c</label>
         <input type="range" id="c-slider" class="slider1d"
+               style="flex: 0 0 120px; min-width: 0;"
                min="0.05" max="3" step="any" value="0.5">
-        <span class="slider1d-val" id="c-val">0.500</span>
+        <input type="number" id="c-manual" min="0.01" max="100" step="0.01" value="0.5"
+               style="width: 64px;" aria-label="Conformal radius c">
       </div>
-      <div class="row" style="font-size: 11px; color: #777;">
-        Text:
-        <input type="number" id="c-manual" min="0.01" max="100" step="0.01" value="0.5" style="width: 78px;">
+      <!-- Auto-estimate the critical conformal radius c* (largest c with a valid
+           unbounded QD). On success: caps the slider at c* and jumps to ≈0.99·c*. -->
+      <div id="c-estimate-row" style="margin-top: 8px;">
+        <button id="c-estimate-btn" class="small" type="button" data-str-title="tooltips.estimateMaxC">Estimate max c</button>
+        <span id="c-estimate-busy" class="hidden" style="margin-left: 6px; font-size: 11px; color: #777;">
+          <span class="search-spinner"></span> <span id="c-estimate-busy-text">searching…</span>
+        </span>
+      </div>
+      <div id="c-estimate-result" class="hidden" style="margin-top: 6px; font-size: 12px;">
+        <span id="c-estimate-value"></span>
+        <span id="c-estimate-note" style="display: block; color: #777; font-size: 11px; margin-top: 2px;"></span>
       </div>
     </section>
 
@@ -201,7 +261,7 @@
       <h2>Solver settings</h2>
       <div class="row">
         <label>Boundary samples:
-          <input type="number" id="samples" min="50" max="5000" step="50" value="500" style="width: 80px;">
+          <input type="number" id="samples" min="50" max="5000" step="50" value="500" style="width: 80px;" aria-label="Boundary sample count">
         </label>
       </div>
       <div class="row">
@@ -216,18 +276,56 @@
       <div class="row">
         <label><input type="checkbox" id="auto-fit"> Auto-fit view on solve</label>
       </div>
-      <div class="row">
+
+      <!-- Power-user solve behaviour. (Visualization overlays moved out to the
+           always-visible #overlays-card below for discoverability — item 2.) -->
+      <details class="solver-advanced" style="margin-top:8px;">
+        <summary style="cursor:pointer; user-select:none; font-size:12px; color:#555;">Advanced solve behaviour</summary>
+        <div class="row" style="margin-top:6px;">
+          <label><input type="checkbox" id="auto-switch-singular" checked> Auto-switch singular ⇄ non-singular PQD when the boundary crosses the origin</label>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============== Overlays (item 2) ==============
+         The plot-overlay toggles, surfaced as an always-visible "Layers" card
+         (they used to be loose checkboxes in a collapsed <details>). Each row
+         carries a small color key so the on-plot colors are self-explaining.
+         The input ids are unchanged so the ui.js toggle handlers still bind. -->
+    <section class="card" id="overlays-card">
+      <h2>Overlays</h2>
+      <div class="row ov-row">
+        <span class="ov-key ov-key-vf" aria-hidden="true">→</span>
         <label>Vector field:
           <select id="vector-field-mode">
             <option value="off" selected>Off</option>
-            <option value="polya">Pólya field   h̄(w)</option>
-            <option value="external" id="vf-external-opt">External field   w − h̄(w)</option>
+            <option value="polya">Pólya field: h̄(w)</option>
+            <option value="external" id="vf-external-opt">External field: w − h̄(w)</option>
           </select>
         </label>
       </div>
-      <div class="row">
-        <label title="Plot the w-plane images of {z : φ'(z) = 0}. Critical points inside the relevant disk (𝔻 for bounded, 𝔻* for unbounded) predict univalence loss; those near |z|=1 predict imminent degeneracy.">
-          <input type="checkbox" id="critical-set-toggle"> Critical-set image (zeros of φ′)
+      <div class="row ov-row">
+        <span class="ov-key" aria-hidden="true"><span class="ov-dot" style="background:#d12d2d;"></span><span class="ov-dot" style="background:#d97706;"></span></span>
+        <label data-str-title="tooltips.criticalPoints">
+          <input type="checkbox" id="critical-set-toggle"> Critical points <span class="ov-note" data-str-html="notes.criticalPoints"></span>
+        </label>
+      </div>
+      <div class="row ov-row">
+        <span class="ov-key ov-key-grad" aria-hidden="true"></span>
+        <label data-str-title="tooltips.curvature">
+          <input type="checkbox" id="curvature-toggle"> Curvature heat-strip <span class="ov-note" data-str-html="notes.curvature"></span>
+        </label>
+      </div>
+      <div class="row ov-row">
+        <span class="ov-key" aria-hidden="true"><span class="ov-dash"></span><span class="ov-dia" style="background:#0d9488;"></span></span>
+        <label data-str-title="tooltips.phenomena">
+          <input type="checkbox" id="phenomena-toggle"> Annotated phenomena <span class="ov-note" data-str-html="notes.phenomena"></span>
+        </label>
+      </div>
+      <div class="row ov-row">
+        <span class="ov-key" aria-hidden="true"><span class="ov-dot" style="border:1.2px solid #0d9488;background:transparent;"></span><span class="ov-dia" style="background:#7c3aed;"></span></span>
+        <label data-str-title="tooltips.faberRoots">
+          <input type="checkbox" id="faber-roots-toggle"> Faber roots <span class="ov-note" data-str-html="notes.faberRoots"></span>
         </label>
       </div>
     </section>
@@ -242,39 +340,36 @@
           </h2>
         </summary>
 
-        <div class="hint" style="margin-top: 8px;">
-          Overrides for the aggressiveness preset. Leave a field blank to use
-          the preset's default. Phase checkboxes are enabled by default.
-        </div>
+        <div class="hint" style="margin-top: 8px;" data-str-html="hints.searchOptions"></div>
 
         <!-- A. Phases -->
         <div class="search-opt-group">
           <div class="search-opt-group-title">Phases</div>
-          <div class="row"><label><input type="checkbox" id="so-phase-direct"        checked> Direct algebraic (A1)</label></div>
-          <div class="row"><label><input type="checkbox" id="so-phase-continuation"  checked> Continuation in t (A2)</label></div>
-          <div class="row"><label><input type="checkbox" id="so-phase-multistart"    checked> Multistart, perturbed (A3)</label></div>
-          <div class="row"><label><input type="checkbox" id="so-phase-diverse"       checked> Diverse seeds, log-uniform (A4)</label></div>
-          <div class="row"><label><input type="checkbox" id="so-phase-deflation"     checked> Deflation, Brown-Gearhart (A5)</label></div>
+          <div class="row"><label><input type="checkbox" id="so-phase-direct"        checked> Direct algebraic</label></div>
+          <div class="row"><label><input type="checkbox" id="so-phase-continuation"  checked> Continuation in t</label></div>
+          <div class="row"><label><input type="checkbox" id="so-phase-multistart"    checked> Multistart, perturbed</label></div>
+          <div class="row"><label><input type="checkbox" id="so-phase-diverse"       checked> Diverse seeds, log-uniform</label></div>
+          <div class="row"><label><input type="checkbox" id="so-phase-deflation"     checked> Deflation (Brown–Gearhart)</label></div>
         </div>
 
         <!-- B. Multistart budget -->
         <div class="search-opt-group">
           <div class="search-opt-group-title">Multistart budget</div>
-          <div class="row"><label>numRestarts <input type="number" id="so-num-restarts"   min="0"  step="1"   placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Newton restarts <input type="number" id="so-num-restarts"   min="0"  step="1"   placeholder="preset" class="so-num"></label></div>
           <div class="row"><label>Diverse seeds <input type="number" id="so-num-diverse"  min="0"  step="1"   placeholder="auto"   class="so-num"></label></div>
           <div class="row"><label>Deflation seeds <input type="number" id="so-num-deflation" min="0" step="1" placeholder="auto"   class="so-num"></label></div>
-          <div class="row"><label>Bg alt chunks <input type="number" id="so-bg-chunks"   min="0"  step="1"   placeholder="preset" class="so-num"></label></div>
-          <div class="row"><label>Bg alt chunk size <input type="number" id="so-bg-chunk-size" min="1" step="1" placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Background search chunks <input type="number" id="so-bg-chunks"   min="0"  step="1"   placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Chunk size <input type="number" id="so-bg-chunk-size" min="1" step="1" placeholder="preset" class="so-num"></label></div>
           <div class="row"><label><input type="checkbox" id="so-keep-searching"> Keep searching (no chunk cap)</label></div>
         </div>
 
         <!-- C. Newton & continuation -->
         <div class="search-opt-group">
           <div class="search-opt-group-title">Newton &amp; continuation</div>
-          <div class="row"><label>Newton maxIter <input type="number" id="so-newton-maxiter" min="1" step="1" placeholder="preset" class="so-num"></label></div>
-          <div class="row"><label>Newton tol <input type="text"   id="so-newton-tol"    placeholder="preset" class="so-num"></label></div>
-          <div class="row"><label>Cont. tStart <input type="text" id="so-cont-tstart"   placeholder="preset" class="so-num"></label></div>
-          <div class="row"><label>Cont. growFactor <input type="text" id="so-cont-grow" placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Newton max iterations <input type="number" id="so-newton-maxiter" min="1" step="1" placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Newton tolerance <input type="text"   id="so-newton-tol"    placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Continuation t-start <input type="text" id="so-cont-tstart"   placeholder="preset" class="so-num"></label></div>
+          <div class="row"><label>Continuation grow factor <input type="text" id="so-cont-grow" placeholder="preset" class="so-num"></label></div>
         </div>
 
         <!-- D. Deflation -->
@@ -312,7 +407,14 @@
 
     <section class="card" id="status-card">
       <h2>Status</h2>
-      <div id="status">Idle</div>
+      <div id="status" role="status" aria-live="polite" aria-atomic="true">Idle</div>
+      <!-- Shown while the primary solve is in flight; the Cancel button aborts
+           the warm worker (B3). Hidden as soon as the solve settles. -->
+      <div id="solve-busy-row" class="hidden" style="margin-top: 8px;">
+        <span class="search-spinner"></span>
+        <span style="font-size: 11px; color: var(--c-muted);"><span id="solve-phase">solving…</span> <span id="solve-elapsed"></span></span>
+        <button id="solve-cancel-btn" class="small" style="margin-left: 6px;">Cancel</button>
+      </div>
       <div id="try-harder-row" style="margin-top: 8px;">
         <button id="try-harder-btn" class="small">Try harder (exhaustive search)</button>
         <span id="try-harder-busy" class="hidden" style="margin-left: 6px; font-size: 11px; color: #777;">
@@ -321,10 +423,49 @@
       </div>
     </section>
 
-    <section class="card hidden" id="riemann-map-card">
-      <h2>Riemann map φ(z)</h2>
-      <div id="riemann-map-content"></div>
+    <!-- Item 1: sidebar dock target. When the user clicks "dock" on the on-plot
+         status panel, ui.js moves #status-panel here (clearing the plot); the
+         "pop out" control moves it back. Empty when the panel is floating. -->
+    <div id="status-dock-host"></div>
+
+    <!-- Thesis-example analytic-oracle card (#8). Hidden until an example is
+         loaded from the gallery; ui-thesis.js fills #oracle-content with the
+         computed-vs-expected comparison rows. -->
+    <section class="card hidden" id="oracle-card">
+      <h2>Analytic oracle</h2>
+      <div id="oracle-content"></div>
     </section>
+
+    <!-- Faber-polynomials analysis card. Hidden unless the solved domain is a
+         classical UNBOUNDED QD (family 'unboundedQD'). ui-faber.js computes the
+         Faber polynomials F_n of the bounded complement K = ℂ\Ω, renders them
+         (formula + coefficient table), and on demand pushes their roots to the
+         main canvas (roots cluster inside K). -->
+    <section class="card hidden" id="faber-card">
+      <h2>Faber polynomials</h2>
+      <div class="hint" style="margin-bottom:6px;" data-str-html="hints.faberCard"></div>
+      <div class="row">
+        <label>Order N
+          <input type="number" id="faber-order" min="1" max="30" step="1" value="6" style="width:64px;">
+        </label>
+        <span class="key" id="faber-cap" style="margin-left:8px;"></span>
+      </div>
+      <div class="row">
+        <label><input type="radio" name="faber-mode" id="faber-mode-all" value="all" checked> All roots up to N</label>
+        <label style="margin-left:10px;"><input type="radio" name="faber-mode" id="faber-mode-single" value="single"> Single F<sub>n</sub>, n =
+          <input type="number" id="faber-single-n" min="1" max="30" step="1" value="6" style="width:56px;"></label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="faber-show-roots"> Plot roots on domain</label>
+        <label style="margin-left:10px;"><input type="checkbox" id="faber-show-polys" checked> Show polynomial</label>
+      </div>
+      <div id="faber-content"></div>
+    </section>
+
+    <!-- The Riemann map, geometric properties, and boundary singularities have
+         moved to the transparent #status-panel overlaid on the plot view
+         (bottom-right); see <main id="plot-area"> below and renderStatusPanel()
+         in ui.js. The #status card above keeps only operational messaging. -->
 
     <section class="card hidden" id="alternates-card">
       <h2>
@@ -346,13 +487,7 @@
     <div id="controls-direct" style="display:none;">
       <section class="card">
         <h2>Direct problem</h2>
-        <div class="hint">
-          Given a Riemann map <code>φ : 𝔻 → Ω</code>, compute the quadrature
-          function <code>h</code> for which <code>Ω ∈ QD(h)</code>. Supports
-          bounded classical QD (polynomial and rational <code>φ</code>),
-          unbounded classical QD (Laurent at ∞), and a numerical-fallback
-          mode for arbitrary expressions.
-        </div>
+        <div class="hint" data-str-html="hints.directProblem"></div>
       </section>
     </div><!-- /#controls-direct -->
 
@@ -363,14 +498,7 @@
     <div id="controls-schwarz" class="tab-panel" role="tabpanel" hidden>
       <section class="card">
         <h2>Schwarz reflection dynamics</h2>
-        <div class="hint">
-          For a Riemann map <code>φ : 𝔻 → Ω</code>, the Schwarz reflection
-          <code>σ(w) = conj(F(ψ(w)))</code> is anti-meromorphic in Ω and fixes
-          <code>∂Ω</code>. This tab colors each <code>w ∈ Ω</code> by the
-          smallest <code>n</code> for which <code>σⁿ(w) ∈ Ω^c</code> (the
-          "fundamental tile"). Points whose orbit diverges to ∞ before
-          re-entering <code>Ω^c</code> are flagged as the escaping set.
-        </div>
+        <div class="hint" data-str-html="hints.schwarzDynamics"></div>
       </section>
     </div><!-- /#controls-schwarz -->
 
@@ -388,51 +516,77 @@
   <main id="plot-area">
     <canvas id="canvas"></canvas>
     <div id="plot-overlay">
-      <button id="btn-fit" title="Fit view to data">Fit</button>
-      <button id="btn-reset" title="Reset view">Reset</button>
+      <button id="btn-fit" data-str-title="tooltips.fit">Fit</button>
+      <button id="btn-reset" data-str-title="tooltips.reset">Reset</button>
     </div>
     <div id="plot-readout"></div>
+
+    <!-- Transparent solution-summary panel, overlaid bottom-right of the plot
+         (bottom-left is #plot-readout, so no collision). Populated by
+         renderStatusPanel() from the QD.PrimarySolution envelope; shown only on
+         the QD tab's inverse view. Collapses to just the badge bar via #sp-collapse. -->
+    <aside id="status-panel" class="hidden" aria-label="Solution summary" aria-live="polite">
+      <div id="status-panel-head">
+        <span id="sp-badge"></span>
+        <button id="sp-dock" class="small" data-str-title="tooltips.dock" aria-pressed="false">⇤</button>
+        <button id="sp-collapse" class="small" data-str-title="tooltips.collapse" aria-expanded="true">⌄</button>
+      </div>
+      <div id="status-panel-body">
+        <details id="sp-geom" open>
+          <summary>Geometric properties</summary>
+          <div id="sp-geom-content"></div>
+        </details>
+        <details id="sp-cusps" open>
+          <summary>Boundary singularities</summary>
+          <div id="sp-cusps-content"></div>
+        </details>
+        <details id="sp-observables" open>
+          <summary>Geometry &amp; accuracy</summary>
+          <div id="sp-observables-content"></div>
+        </details>
+      </div>
+    </aside>
+
+    <!-- Item 4: first-run coachmark over the plot (shown once, then dismissed
+         and remembered in localStorage). Display is driven by inline style from
+         ui.js so the #id rule can't fight a .hidden class. -->
+    <div id="plot-coach" role="note">
+      <span data-str-html="hints.coachmark"></span>
+      <button id="plot-coach-dismiss" class="small">Got it</button>
+    </div>
   </main>
 
 </div>
 
-<!-- Backend math -->
-<script src="complex.js"></script>
-<script src="taylor.js"></script>
-<script src="solver.js"></script>                <!-- Shared infrastructure -->
-<script src="solver-faber.js"></script>          <!-- Shared inverse Faber primitives (QD.Faber) -->
-<script src="solver-qd.js"></script>             <!-- Bounded classical QDs (Family.boundedQD) -->
-<script src="solver-uqd.js"></script>            <!-- Unbounded classical QDs (Family.unboundedQD) -->
-<script src="solver-lqd-common.js"></script>     <!-- Shared LQD machinery (QD.LqdCommon) -->
-<script src="solver-lqd.js"></script>            <!-- Bounded non-singular LQDs (Family.boundedLQD) -->
-<script src="solver-lqd-singular.js"></script>   <!-- Bounded singular LQDs (Family.boundedLQD_singular) -->
-<script src="solver-uqd-lqd.js"></script>        <!-- Unbounded non-singular LQDs (Family.unboundedLQD) -->
-<script src="solver-uqd-lqd-singular.js"></script><!-- Unbounded singular LQDs (Family.unboundedLQD_singular) -->
-<script src="parse-h.js"></script>               <!-- Custom-text h(w) parser (QD.parseH / QD.formatH) -->
-<script src="critical-set.js"></script>           <!-- QD.findCriticalPoints — zeros of φ' -->
+<!-- Shared asset manifest — single source of truth for the file list
+     consumed by primary-solver-worker.js, param-slice-pool.js, and sw.js.
+     Must load before anything that references QD_ASSET_MANIFEST. -->
+<script src="asset-manifest.js"></script>
 
-<!-- ============== Direct-problem (φ → h) ============== -->
-<script src="direct/direct-common.js"></script>   <!-- QD.Direct math kernel -->
+<!-- Page-script loader. Every module <script> is injected from
+     QD_ASSET_MANIFEST.PAGE_SCRIPTS (the single source of truth for load order)
+     with a ?v=<CACHE_VERSION> query, so the browser HTTP cache can never serve
+     a stale page script after a deploy. document.write is used deliberately:
+     during initial parse it injects the scripts inline, preserving the strict
+     synchronous load order (each runs before the parser reaches the inline
+     tab/SW scripts below) — exactly the behaviour of the static tags it
+     replaces. To add/remove/reorder a module, edit asset-manifest.js, not here. -->
+<script>
+(function () {
+  'use strict';
+  var m = window.QD_ASSET_MANIFEST;
+  if (!m || !m.PAGE_SCRIPTS) throw new Error('asset-manifest.js must load before the page-script loader');
+  var v = encodeURIComponent(m.CACHE_VERSION);
+  for (var i = 0; i < m.PAGE_SCRIPTS.length; i++) {
+    document.write('<script src="' + m.PAGE_SCRIPTS[i] + '?v=' + v + '"><\/script>');
+  }
+})();
+</script>
 
-<!-- ============== Schwarz dynamics (σⁿ visualization) ============== -->
-<script src="schwarz/schwarz-common.js"></script>  <!-- QD.Schwarz math kernel -->
-<script src="schwarz/schwarz-webgl.js"></script>   <!-- WebGL 2 GPU renderer (optional) -->
-
-<!-- ============== Parameter-slice cartography (sweep h-parameters) ============== -->
-<script src="param-slice/param-slice-common.js"></script>  <!-- pure math kernel -->
-<script src="param-slice/param-slice-pool.js"></script>    <!-- Web Worker pool + Blob bundler -->
-
-<!-- Frontend UI -->
-<script src="qol.js"></script>                  <!-- QD.QoL: help buttons, hover tooltips, copy (HANDOFF #33) -->
-<script src="ui.js"></script>
-<script src="direct/direct-ui.js"></script>   <!-- Direct-tab UI (mounts on tab activation) -->
-<script src="schwarz/schwarz-ui.js"></script> <!-- Schwarz-tab UI (mounts on tab activation) -->
-<script src="param-slice/param-slice-ui.js"></script>   <!-- Parameter-slice-tab UI (mounts on tab activation) -->
-
-<!-- ============== Riemann-sphere view (stereographic Schwarz fractal) ============== -->
-<script src="sphere/sphere-common.js"></script>   <!-- pure math kernel (SphereCommon) -->
-<script src="sphere/sphere-webgl.js"></script>    <!-- WebGL 2 renderer (QD.Sphere.createRenderer) -->
-<script src="sphere/sphere-ui.js"></script>       <!-- QD.SphereView adapter (mounted by the Schwarz tab; HANDOFF #29) -->
+<!-- Populate the static helptext / tooltips / hints from the central strings
+     file (app/ui-strings.js → QD.Strings). Runs synchronously after the page
+     scripts above have loaded, so it fills [data-str*] elements before paint. -->
+<script>window.QD && window.QD.Strings && window.QD.Strings.apply();</script>
 
 <!-- Tab switching: minimal, no framework. Each .tab-btn toggles which
      .tab-panel is visible. The plot canvas is shared; ui.js owns it for
@@ -467,6 +621,22 @@
   }
   tabs.forEach(t => t.addEventListener('click', () => activate(t.dataset.tab)));
   // Initial: QD tab active (matches HTML markup).
+})();
+</script>
+
+<!-- PWA: register the service worker for offline support (P3.3). Skipped on
+     file:// origins (service workers require http/https) — opening the app
+     locally without a server is still fully functional, just not cached. -->
+<script>
+(function () {
+  'use strict';
+  if (!('serviceWorker' in navigator)) return;
+  if (location.protocol === 'file:') return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((err) => {
+      console.warn('[pwa] service worker registration failed:', err);
+    });
+  });
 })();
 </script>
 </body>

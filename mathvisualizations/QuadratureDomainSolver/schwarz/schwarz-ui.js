@@ -10,22 +10,30 @@
 //   • GPU (default): WebGL 2 fragment shader from schwarz-webgl.js. One full
 //     frame in 10-30 ms typical. Drag/zoom calls renderImmediate() per
 //     mousemove for true interactive panning.
-//   • CPU (fallback): progressive 4×4 → 2×2 → 1×1 pyramid on the main thread,
-//     chunked across requestAnimationFrame ticks (~14 ms per slice) so the
-//     UI stays responsive. Per-pixel warm seeds from the left neighbor in
-//     raster order → Newton converges in 1-3 iterations on average.
+//   • CPU (fallback): progressive 4×4 → 2×2 → 1×1 pyramid. Preferred path is
+//     the dedicated QD.SchwarzCpuWorker (A7), which computes the whole pyramid
+//     off the main thread and streams one field snapshot per pass; when no
+//     Worker is available (file:// / clone failure) it runs in-process,
+//     chunked across requestAnimationFrame ticks (~14 ms per slice) so the UI
+//     stays responsive (_renderCpuPyramid). Per-pixel warm seeds from the left
+//     neighbor in raster order → Newton converges in 1-3 iterations on average.
 //
 // Layer stacking: the GPU canvas (#schwarz-gl-canvas) is inserted behind the
 // main #canvas. The 2D canvas keeps its in-flow layout but gets z-index 1 +
 // position:relative so it can host transparent overlays (boundary + orbit)
 // on top of the GPU pixels. The GL layer hides on tab-out.
 //
-// Double-click-to-orbit: plots {w₀, σ(w₀), σ²(w₀), …} as a polyline of small
-// dots. Single click is reserved for the start of a drag (dragMoved guard
-// suppresses orbit drops after pans).
+// Fractal-mode canvas interaction (plane view):
+//   • hover        → live forward σ-orbit preview {w₀, σ(w₀), …} (toggleable;
+//                    rAF-coalesced; only inside Ω where σ is defined)
+//   • single click → PIN that orbit (deferred by CLICK_DELAY so a double-click
+//                    can cancel it; dragMoved guard suppresses pins after pans)
+//   • double click → seed a preimage tree at the click, gated to the tiling
+//                    set (escapeTime kind 'fundamental'); drawn over the fractal
+// The preimage tree is a fractal-mode overlay, not a separate mode.
 //
-// Hover readout: pixel coords + escape time (CPU mode only — GPU doesn't
-// keep a per-pixel field array; hover shows coords only).
+// Hover readout: pixel coords + escape time (CPU mode keeps a per-pixel field;
+// GPU mode does an ad-hoc per-cursor escapeTime — see onMouseMove).
 // =============================================================================
 
 (function () {
@@ -42,6 +50,15 @@
     view: {
       // world ↔ pixel transform, centered on Ω
       cx: 0, cy: 0, scale: 200,           // px per unit
+      cssW: 600, cssH: 600,
+    },
+
+    // z-plane view transform (independent pan/zoom): the unit disk 𝔻 (bounded)
+    // or its exterior 𝔻* (unbounded). Kept separate from `view` so the w-plane
+    // and z-diskframings don't corrupt each other and so the w-side painters
+    // (which read `view` via worldToPixel) can never draw through a z-transform.
+    zView: {
+      cx: 0, cy: 0, scale: 200,           // px per unit (z-coordinates)
       cssW: 600, cssH: 600,
     },
 
@@ -65,18 +82,102 @@
     rendering: false,
     renderToken: 0,
 
-    orbit: [],                             // last-clicked orbit polyline
+    // Forward σ-orbit overlay. `orbit` is the AUTHORITATIVE pinned orbit
+    // (kept in sync with pinnedOrbit) because downstream consumers — the
+    // z-panel (_recomputeZPanelOrbit), sphere view, sweep, and PNG export —
+    // all read sState.orbit. The transient hover orbit lives separately in
+    // hoverOrbit and must NOT be assigned to `orbit` (so the z-panel etc.
+    // don't flicker as the cursor moves).
+    orbit:            [],                  // pinned forward-orbit polyline (= pinnedOrbit)
+    pinnedOrbit:      [],                  // single-click-pinned orbit
+    hoverOrbit:       null,                // transient hover-preview orbit (null = none)
+    hoverOrbitEnabled: true,               // "Live orbit on hover" toggle (default ON)
+    _hoverRaf:        null,                // rAF id coalescing hover-orbit recompute
+    _pendingHoverW:   null,                // latest hovered world point awaiting the rAF
+    _clickTimer:      null,                // deferred single-click pin (cancelled by dblclick)
 
     // View toggle (HANDOFF #29): 'plane' = Schwarz dynamics on the w-plane
-    // (the original Schwarz tab), 'sphere' = same iteration textured onto a
-    // Riemann sphere. The sphere renderer is lazy-mounted via QD.SphereView
-    // on first switch to sphere mode.
-    viewMode:   'plane',                   // 'plane' | 'sphere'
+    // (the original Schwarz tab), 'z' = the same tiling uniformized onto the
+    // unit disk via z = ψ(w) (CPU-rendered: w = φ(z) then escape-time),
+    // 'sphere' = the iteration textured onto a Riemann sphere. The sphere
+    // renderer is lazy-mounted via QD.SphereView on first switch to sphere mode.
+    viewMode:   'plane',                   // 'plane' | 'z' | 'sphere'
     sphereView: null,                      // QD.SphereView handle
+
+    // Render mode. The preimage tree is no longer its own mode — it is a
+    // fractal-mode OVERLAY drawn on top of the GL fractal, seeded by
+    // double-clicking anywhere in the tiling set (TODO #16). Plane-view only.
+    mode:           'fractal',             // 'fractal' | 'domain-coloring'
+    preimageTree:   null,                  // last-built tree (S1; fractal-mode overlay)
+    preimageDepth:  4,                     // current depth setting
+    preimageBudget: 4096,                  // current visual budget
+
+    // Limit-set overlay (S3). Chaos game over σ⁻¹; rendered as a point
+    // cloud on the 2D canvas overlay. dim_H estimate displayed in the
+    // sidebar. Sized small by default to keep compute time < 1s.
+    limitSet:       null,                  // Float64Array of [re,im,...] points
+    limitSetDim:    null,                  // last-computed dim_H estimate
+    limitSetN:      5000,
+
+    // S4 Analysis overlays.
+    showSingularities: false,              // F3: σ-poles + branch points on canvas
+    sigmaSingularities: null,              // cached { poles, branchPoints }
+    showLevelCurves:   false,              // F12: |σ| solid + arg(σ) dashed contours
+    levelCurves:       null,               // cached { abs, arg } contour lists
+    sigmaForm:         null,               // E13: { family, phiText, fText, sigmaText, ... }
+
+    // S5 Forward-dynamics state.
+    showCriticalOrbits: false,             // H7: σ-orbits of canonical points
+    criticalOrbits:     null,              // cached [{ label, orbit: [{re,im}, …] }, …]
+
+    // E11: user-drawn curve forward-image. shift-drag on canvas to draw.
+    curveImageDraft:    null,              // [{re,im}, …] being drawn live
+    curveImage:         null,              // [[{re,im},…], [{re,im},…], …] σ⁰…σᵏ
+    curveImageDepth:    4,
+    isDrawingCurve:     false,             // true while shift-drag is active
+
+    // E10: cycles (period-n).
+    cycles:             null,              // [{period, points}, …]
+    cyclePeriodMax:     2,
+
+    // H8: orbit-family sweep — pre-baked horizontal line through Ω center.
+    sweepOrbits:        null,              // [[{re,im}, …], …]
+    sweepN:             16,
+    sweepDepth:         12,
+
+    // Domain-coloring (F6) backing field. When mode='domain-coloring', this
+    // overlays the GPU/CPU fractal. Cached per φ-viewport.
+    domainColor:        null,              // { buf, W, H, viewport }
+
+    // ψ-pullback of the pinned w-orbit, drawn in the z-plane view.
+    zPanelOrbit:        null,              // [{re, im}, ...] z-history of sState.orbit
   };
 
   // Kinds enum
   const KIND_FUND = 0, KIND_ESC = 1, KIND_INT = 2, KIND_INV = 3, KIND_OUTSIDE = 4;
+
+  // Interaction tuning. CLICK_DELAY defers the single-click orbit-pin long
+  // enough for a double-click (which seeds the preimage tree) to cancel it;
+  // the dblclick handler clears the pending timer. Exposed via the test hook.
+  // The preimage-tree seed gate runs escapeTime with a generous iteration cap
+  // so genuinely-fundamental (tiling-set) points that escape slowly aren't
+  // mis-classified as non-escaping `interior`. Display/hover use the smaller
+  // grid.maxIter — this larger cap is for the accept/reject decision only.
+  function gateMaxIter() { return Math.max(256, (sState.grid.maxIter | 0) * 4); }
+
+  // Forward bindings for the Phase-3 paint module (assigned by the install near
+  // the end of this file; called by name throughout — see schwarz-paint.js).
+  let clearCanvas, paintAll, repaintField, paintBoundaryOnTop, paintOrbit;
+  let paintPreimageTree, paintLimitSet, paintZView, setProgress;
+  let requestRecompute;
+  let attachCanvasHandlers, onCanvasClick, onCanvasDblClick, onMouseMove;
+  let runHoverOrbit, pinOrbitAt, _schwarzInter;
+  // Forward bindings for the Phase-3 feature-compute module (assigned by the
+  // install near the end of this file; the card-builder event handlers + the
+  // interaction install call them by name — see schwarz-features.js).
+  let _recomputeDomainColoring, _rebuildPreimageTreeIfActive, _refreshPreimageTreeStats;
+  let _computeLimitSet, _clearLimitSet, _recomputeCriticalOrbits, _findCycles;
+  let _exportPng, _recomputeZPanelOrbit, _computeSweep, _recomputeLevelCurves;
 
   // ---------------------------------------------------------------------------
   // Lazy mount
@@ -87,6 +188,11 @@
       // layers so they can't show through under another tab's drawing.
       sState.renderToken++;
       showGLLayer(false);
+      // Cancel any pending interaction timers/frames so they can't fire
+      // (and repaint into another tab) after we've left.
+      if (sState._hoverRaf != null) { cancelAnimationFrame(sState._hoverRaf); sState._hoverRaf = null; }
+      if (sState._clickTimer != null) { clearTimeout(sState._clickTimer); sState._clickTimer = null; }
+      sState.hoverOrbit = null;
       // HANDOFF #34: also wipe our pixels from the shared 2D canvas so the
       // CPU-pyramid pixmap and orbit-polyline overlay don't briefly bleed
       // through into whichever tab takes over. The receiving tab's
@@ -99,28 +205,59 @@
     }
     if (!sState.mounted) { mountSchwarzSidebar(); sState.mounted = true; }
     refreshSourceStatus();
-    if (sState.viewMode === 'plane') {
+    if (sState.viewMode === 'sphere') {
+      // sphere mode: hide the Schwarz GL layer, activate sphere view.
+      showGLLayer(false);
+      _activateSphereView();
+    } else {
+      // 2D views (plane or z). Both can use the GPU (the shader's u_viewMode
+      // branch handles z → w = φ(z)); doRecompute owns the final GL visibility,
+      // this just avoids a flash. PQDs fall back to CPU via activeRenderer().
       if (sState.sphereView) sState.sphereView.deactivate();
       if (sState.schwarz) {
-        showGLLayer(activeRenderer() === 'gpu');
+        const is2D = sState.viewMode === 'plane' || sState.viewMode === 'z';
+        showGLLayer(is2D && activeRenderer() === 'gpu');
         requestRecompute();
       } else {
         showGLLayer(false);
         clearCanvas();
       }
-    } else {
-      // sphere mode: hide the Schwarz GL layer, activate sphere view.
-      showGLLayer(false);
-      _activateSphereView();
     }
+  });
+
+  // Repaint the Schwarz view on window resize. The shared 2D #canvas backing
+  // store is resized (and cleared) by the QD plot's global resize handler
+  // (ui.js); without this the Schwarz overlay/field is left blank or stale at
+  // the new size until the user pans/zooms. Only acts when the Schwarz tab is
+  // active + in plane mode; rAF-coalesced. Sphere mode has its own resize
+  // observer (sphere-ui.js). requestRecompute / _recomputeDomainColoring /
+  // paintAll are forward-declared lets, assigned by the installs at the tail —
+  // resolved by the time this fires.
+  let _schwarzResizeRaf = null;
+  window.addEventListener('resize', () => {
+    if (_schwarzResizeRaf) return;
+    _schwarzResizeRaf = requestAnimationFrame(() => {
+      _schwarzResizeRaf = null;
+      if (!isSchwarzActive() || !sState.schwarz || sState.viewMode === 'sphere') return;
+      syncCanvasSize();
+      if (sState.viewMode === 'plane' && sState.mode === 'domain-coloring') { _recomputeDomainColoring(); paintAll(); }
+      else requestRecompute();
+    });
   });
 
   function mountSchwarzSidebar() {
     const root = document.getElementById('controls-schwarz');
     if (!root) return;
     root.innerHTML = '';
-    root.appendChild(makeViewToggleCard());
+    // Source φ first — it's the first tile a user touches when opening the tab
+    // (capture a φ from the Inverse tab before anything else is meaningful).
     root.appendChild(makeSourceCard());
+    root.appendChild(makeViewToggleCard());
+    root.appendChild(makeModeCard());
+    root.appendChild(makeOverlaysCard());
+    root.appendChild(makeLimitSetCard());
+    root.appendChild(makeAnalysisCard());
+    root.appendChild(makeForwardCard());
     root.appendChild(makeRenderCard());
     root.appendChild(makeInfoCard());
     // Mount-time placeholder for SphereView's display + camera cards. The
@@ -139,30 +276,47 @@
     const H = window.QD.QoL.attachHelp;
     const root = document.getElementById('controls-schwarz');
     if (!root) return;
-    // The view-toggle card has no h2; the others do.
-    const headers = root.querySelectorAll('section.card h2');
-    if (headers[0]) H(headers[0],
-      `<b>Source φ.</b> The Schwarz dynamics tab iterates σ(w) = φ(1/φ⁻¹(w)),
-       the Schwarz reflection associated with Ω. Capture a φ from the QD tab
-       (after solving). Each pixel is colored by escape time of σ-iteration.`);
-    if (headers[1]) H(headers[1],
-      `<b>Render.</b> CPU pyramid uses a Worker that progressively refines
-       resolution; GPU uses a WebGL 2 fragment shader for instant frames.
+    // Attach by card id (not header index) so sidebar reordering can't scramble
+    // which card a popover lands on. The Source φ tile is intentionally compact,
+    // so its full description lives here in the "?" help.
+    const help = (sel, html) => { const h = root.querySelector(sel + ' h2'); if (h) H(h, html); };
+    help('#schwarz-source-card',
+      `<b>Source φ.</b> The Schwarz reflection σ(w) = conj(F(ψ(w))) is built from a
+       Riemann map φ produced by the inverse solver. Solve on the Inverse tab, then
+       click <b>Use this φ</b> to snapshot it here; the tab iterates σ and colors each
+       pixel by escape time. All six inverse families are supported (classical
+       bounded / unbounded, and all four LQD variants).`);
+    help('#schwarz-render-card',
+      `<b>Render.</b> The CPU fallback draws a progressive 4×4→2×2→1×1 pyramid,
+       computed in a background Web Worker when available (falling back to an
+       in-page, animation-frame-sliced render) so the page stays responsive
+       while it refines; GPU uses a WebGL 2 fragment shader for instant frames.
        <i>Colormap</i> + <i>scaleMode</i> change the escape-time → colour
        mapping; <i>maxIter</i> caps the σ-iteration before declaring a pixel
        interior; <i>mod k</i> emphasises orbit-period structure.`);
-    if (headers[2]) H(headers[2],
-      `<b>Click & hover.</b> Click pixels to trace and overlay individual σ
-       orbits. Hover to read the w-plane coordinate + escape time (and, in
-       CPU mode, the pixel kind). In plane view, drag to pan, scroll to zoom.`);
+    help('#schwarz-view-card',
+      `<b>View.</b> <b>plane</b> draws the σ-dynamics tiling on the w-plane (Ω).
+       <b>z-disk</b> shows the SAME tiling uniformized onto the unit disk 𝔻 (or 𝔻*
+       for unbounded Ω): each z is colored by the escape time of w = φ(z). Every
+       overlay (orbit, preimage tree, limit set, …) is shown ψ-pulled-back into 𝔻.
+       <b>sphere</b> textures the iteration onto the Riemann sphere. plane + z-disk
+       have independent pan/zoom and full click/hover interaction.`);
+    help('#schwarz-info-card',
+      `<b>Click & hover.</b> Single-click in Ω to pin a σ-orbit; double-click in the
+       tiling set to seed a preimage tree; hover reads the coordinate + escape time
+       (and, in CPU mode, the pixel kind). Drag to pan, scroll to zoom. In the
+       z-disk view every click/hover point z maps to w = φ(z) before iterating.`);
   }
 
   function makeViewToggleCard() {
     const card = document.createElement('section');
     card.className = 'card';
+    card.id = 'schwarz-view-card';
     card.innerHTML = `
+      <h2>View</h2>
       <div class="segmented" role="tablist" aria-label="View mode">
-        <button class="seg-btn active" data-view="plane" type="button">plane</button>
+        <button class="seg-btn active" data-view="plane"  type="button">plane</button>
+        <button class="seg-btn"        data-view="z"      type="button">z-disk</button>
         <button class="seg-btn"        data-view="sphere" type="button">sphere</button>
       </div>
     `;
@@ -174,38 +328,483 @@
     return card;
   }
 
-  function setViewMode(mode) {
-    if (mode !== 'plane' && mode !== 'sphere') return;
-    if (mode === sState.viewMode) return;
-    sState.viewMode = mode;
-    // Update segmented-control highlight.
-    document.querySelectorAll('#controls-schwarz .seg-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.view === mode);
+  // ---------------------------------------------------------------------------
+  // Mode card: fractal vs domain-coloring. Plane-view only. The preimage tree
+  // is a fractal-mode overlay (seeded by double-click), not its own mode —
+  // its depth/budget controls live in the fractal-mode options block below.
+  // ---------------------------------------------------------------------------
+  function makeModeCard() {
+    const card = document.createElement('section');
+    card.className = 'card view-2d';
+    card.id = 'schwarz-mode-card';
+    card.innerHTML = `
+      <h2>Mode</h2>
+      <div class="view-plane-only">
+        <div class="segmented" role="tablist" aria-label="Schwarz mode">
+          <button class="seg-btn active" data-mode="fractal"        type="button">fractal</button>
+          <button class="seg-btn"        data-mode="domain-coloring" type="button">domain color</button>
+        </div>
+      </div>
+      <div id="schwarz-mode-options-fractal" style="margin-top:8px;">
+        <div style="font-size:12px; color:#555; margin-bottom:6px;">
+          <b>Double-click</b> in the tiling set to seed a preimage tree (each
+          generation applies σ⁻¹). <b>Single-click</b> pins the forward orbit;
+          hover previews it.
+        </div>
+        <label style="display:block; font-size:12px; margin:4px 0;">
+          <input type="checkbox" id="schwarz-hover-orbit" checked
+                 style="vertical-align:middle; margin-right:4px;">
+          Live orbit on hover
+        </label>
+        <label style="display:block; font-size:12px; margin:4px 0;">
+          Tree depth:
+          <input type="range" min="1" max="8" value="4" id="schwarz-preimage-depth"
+                 style="vertical-align:middle; margin-left:6px; width:120px;">
+          <span id="schwarz-preimage-depth-val" style="font-family:monospace;">4</span>
+        </label>
+        <label style="display:block; font-size:12px; margin:4px 0;">
+          Visual budget:
+          <select id="schwarz-preimage-budget" style="font-size:12px;">
+            <option value="1024">1024</option>
+            <option value="4096" selected>4096</option>
+            <option value="16384">16384</option>
+          </select>
+          <span id="schwarz-preimage-count" style="font-family:monospace; margin-left:8px; color:#777;"></span>
+        </label>
+      </div>
+    `;
+    setTimeout(() => {
+      card.querySelectorAll('.seg-btn').forEach(btn => {
+        btn.addEventListener('click', () => setMode(btn.dataset.mode));
+      });
+      const hover = card.querySelector('#schwarz-hover-orbit');
+      if (hover) {
+        hover.addEventListener('change', () => {
+          sState.hoverOrbitEnabled = hover.checked;
+          if (!hover.checked) {
+            // Turning the preview off — drop any live hover orbit immediately.
+            if (sState._hoverRaf != null) { cancelAnimationFrame(sState._hoverRaf); sState._hoverRaf = null; }
+            sState.hoverOrbit = null;
+            paintBoundaryOnTop();
+          }
+        });
+      }
+      const depthSlider = card.querySelector('#schwarz-preimage-depth');
+      const depthVal    = card.querySelector('#schwarz-preimage-depth-val');
+      if (depthSlider) {
+        depthSlider.addEventListener('input', () => {
+          sState.preimageDepth = +depthSlider.value;
+          if (depthVal) depthVal.textContent = String(sState.preimageDepth);
+          _rebuildPreimageTreeIfActive();
+        });
+      }
+      const budget = card.querySelector('#schwarz-preimage-budget');
+      if (budget) {
+        budget.addEventListener('change', () => {
+          sState.preimageBudget = +budget.value;
+          _rebuildPreimageTreeIfActive();
+        });
+      }
+    }, 0);
+    return card;
+  }
+
+  function setMode(mode) {
+    if (mode !== 'fractal' && mode !== 'domain-coloring') return;
+    if (mode === sState.mode) return;
+    sState.mode = mode;
+    document.querySelectorAll('#schwarz-mode-card .seg-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === mode);
     });
-    _applyViewModeVisibility();
-    if (mode === 'plane') {
-      if (sState.sphereView) sState.sphereView.deactivate();
+    _applyModeOptionsVisibility();
+    // All overlays (tree + orbits) are fractal-mode-only; clear them on any
+    // mode transition so they don't bleed into domain-coloring or linger when
+    // we re-enter fractal mode.
+    sState.preimageTree = null;
+    sState.orbit = []; sState.pinnedOrbit = []; sState.hoverOrbit = null;
+    if (mode === 'domain-coloring') {
+      // S5 / F6: render σ-domain-coloring into the 2D canvas; hide GL.
+      showGLLayer(false);
+      _recomputeDomainColoring();
+      paintAll();
+    } else {
+      sState.domainColor = null;
       if (sState.schwarz) {
         showGLLayer(activeRenderer() === 'gpu');
         requestRecompute();
-      } else {
-        showGLLayer(false);
-        clearCanvas();
       }
-    } else {
+    }
+  }
+
+  // Feature-compute (σ domain-coloring, preimage-tree rebuild + stats) ->
+  // schwarz-features.js (Phase-3 item E). Installed near the end of this file;
+  // the card builders + interaction install call the captured names.
+
+  // ---------------------------------------------------------------------------
+  // Overlays card: clear controls for the plotted overlays. Individual overlay
+  // cards already carry per-feature "Clear" buttons (limit set, cycles, sweep,
+  // curve), but the click-pinned/hover orbit and the double-click preimage tree
+  // had no user-facing clear at all. This card adds a dedicated "Clear orbit"
+  // and a master "Clear all overlays" that wipes every COMPUTED/DRAWN overlay
+  // (orbit, preimage tree, limit set, cycles, sweep, curve image) in one click.
+  // It deliberately leaves the checkbox DISPLAY TOGGLES (σ-poles, level curves,
+  // canonical-point orbits, z-panel) as the user set them — those hide via
+  // their own checkboxes, so wiping their data while the box stays checked would
+  // be inconsistent. Plane-view only (overlays are a plane-view concept).
+  // ---------------------------------------------------------------------------
+  function makeOverlaysCard() {
+    const card = document.createElement('section');
+    card.className = 'card view-2d';
+    card.id = 'schwarz-overlays-card';
+    card.innerHTML = `
+      <h2>Overlays</h2>
+      <div style="font-size:12px; color:#555; margin-bottom:6px;">
+        Clear plotted overlays. <b>Clear all</b> removes orbits, the preimage
+        (inverse) tree, the limit set, cycles, sweeps and curve images; the
+        display-toggle checkboxes below are left as set.
+      </div>
+      <button type="button" id="schwarz-clear-orbit" class="small">Clear orbit</button>
+      <button type="button" id="schwarz-clear-overlays" class="small"
+              style="margin-left:6px;">Clear all overlays</button>
+    `;
+    setTimeout(() => {
+      card.querySelector('#schwarz-clear-orbit').addEventListener('click', clearOrbit);
+      card.querySelector('#schwarz-clear-overlays').addEventListener('click', clearAllOverlays);
+    }, 0);
+    return card;
+  }
+
+  // Clear the forward σ-orbit (both the pinned polyline and any live hover
+  // preview). The z-panel reads sState.orbit, so refresh its pullback when the
+  // panel is open (else just drop it). paintBoundaryOnTop repaints overlays over
+  // the GL/CPU field — the same repaint the per-feature clear buttons use.
+  function clearOrbit() {
+    if (sState._hoverRaf != null) { cancelAnimationFrame(sState._hoverRaf); sState._hoverRaf = null; }
+    sState.orbit = [];
+    sState.pinnedOrbit = [];
+    sState.hoverOrbit = null;
+    _recomputeZPanelOrbit();           // orbit now empty → clears the z-view pullback
+    paintBoundaryOnTop();
+  }
+
+  // Master clear: every computed/drawn overlay. Leaves the checkbox display
+  // toggles (showSingularities / showLevelCurves / showCriticalOrbits) and their
+  // cached data untouched — those are dismissed via their own checkboxes
+  // (clearing the data while the box stays checked would desync).
+  function clearAllOverlays() {
+    clearOrbit();                       // orbit (+ z-view pullback)
+    sState.preimageTree = null;         // S1 inverse tree
+    sState.limitSet = null;             // S3 limit set
+    sState.limitSetDim = null;
+    sState.cycles = null;               // E10 cycles
+    sState.sweepOrbits = null;          // H8 sweep
+    sState.curveImage = null;           // E11 curve forward-image
+    sState.curveImageDraft = null;
+    // Blank the status/count labels owned by the per-overlay cards so they
+    // don't claim a now-cleared overlay still exists.
+    ['schwarz-ls-status', 'schwarz-ls-dim', 'schwarz-cycle-count',
+     'schwarz-preimage-count'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '';
+    });
+    paintBoundaryOnTop();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Limit-set card (S3): chaos-game point cloud + dim_H readout.
+  // Visible in plane view (it's an overlay on the fractal). Hidden in
+  // sphere view via the view-plane-only class.
+  // ---------------------------------------------------------------------------
+  function makeLimitSetCard() {
+    const card = document.createElement('section');
+    card.className = 'card view-2d';
+    card.id = 'schwarz-limit-set-card';
+    card.innerHTML = `
+      <h2>Limit set</h2>
+      <div style="font-size:12px; color:#555; margin-bottom:6px;">
+        Random walk through σ⁻¹ approximates the limit set (∂ tiling set).
+      </div>
+      <label style="display:block; font-size:12px; margin:4px 0;">
+        Sample size:
+        <select id="schwarz-ls-n">
+          <option value="1000">1k</option>
+          <option value="5000" selected>5k</option>
+          <option value="20000">20k</option>
+          <option value="100000">100k</option>
+        </select>
+      </label>
+      <button type="button" id="schwarz-ls-compute"
+              style="margin-top:4px; font-size:12px;">Compute limit set</button>
+      <button type="button" id="schwarz-ls-clear"
+              style="margin-top:4px; font-size:12px;">Clear</button>
+      <div id="schwarz-ls-status" style="font-size:12px; margin-top:6px; color:#555;"></div>
+      <div id="schwarz-ls-dim" style="font-size:12px; margin-top:4px; font-family:monospace;"></div>
+    `;
+    setTimeout(() => {
+      const nSel = card.querySelector('#schwarz-ls-n');
+      nSel.addEventListener('change', () => { sState.limitSetN = +nSel.value; });
+      card.querySelector('#schwarz-ls-compute').addEventListener('click', _computeLimitSet);
+      card.querySelector('#schwarz-ls-clear').addEventListener('click', _clearLimitSet);
+    }, 0);
+    return card;
+  }
+
+  // Limit-set compute/clear (_computeLimitSet / _clearLimitSet) ->
+  // schwarz-features.js (Phase-3 item E).
+
+  // ---------------------------------------------------------------------------
+  // S4: Analysis card — explicit σ form (E13), singularities (F3), level
+  // curves (F12). All overlay on the plane view; sphere mode hides this card.
+  // ---------------------------------------------------------------------------
+  function makeAnalysisCard() {
+    const card = document.createElement('section');
+    card.className = 'card view-2d';
+    card.id = 'schwarz-analysis-card';
+    card.innerHTML = `
+      <h2>σ analysis</h2>
+      <div style="font-size:12px; margin-bottom:6px;">
+        <button type="button" id="schwarz-show-sigma-form"
+                style="font-size:12px;">Show σ(w) form</button>
+      </div>
+      <div id="schwarz-sigma-form-out"
+           style="display:none; font-size:12px; background:#f7f7f9; padding:6px;
+                  border:1px solid #e0e0e8; border-radius:4px; max-height:200px;
+                  overflow:auto; margin:4px 0;"></div>
+      <label style="display:block; font-size:12px; margin:4px 0;">
+        <input type="checkbox" id="schwarz-show-singularities"> Show σ-poles + branch points
+        <span id="schwarz-sigma-sing-count"
+              style="font-family:monospace; color:#777; margin-left:6px;"></span>
+      </label>
+      <label style="display:block; font-size:12px; margin:4px 0;">
+        <input type="checkbox" id="schwarz-show-level-curves"> Show |σ| / arg(σ) level curves
+      </label>
+    `;
+    setTimeout(() => {
+      const btn = card.querySelector('#schwarz-show-sigma-form');
+      const out = card.querySelector('#schwarz-sigma-form-out');
+      btn.addEventListener('click', () => {
+        if (!sState.schwarz) {
+          out.style.display = '';
+          out.textContent = '(no φ captured)';
+          return;
+        }
+        const f = QD.Schwarz.explicitSigmaForm(sState.schwarz);
+        sState.sigmaForm = f;
+        out.style.display = '';
+        // Typeset the LaTeX forms (already produced by explicitSigmaForm) with
+        // KaTeX; fall back per-row to the ASCII text if KaTeX is unavailable or
+        // a particular expression fails to parse.
+        out.innerHTML =
+          '<div class="ssf-fam"></div>' +
+          '<div class="ssf-row ssf-phi"></div>' +
+          '<div class="ssf-row ssf-f"></div>' +
+          '<div class="ssf-row ssf-sigma"></div>';
+        out.querySelector('.ssf-fam').textContent = 'family: ' + f.family;
+        const rk = (sel, latex, text) => {
+          const el = out.querySelector(sel);
+          if (!el) return;
+          if (window.katex && latex) {
+            try { window.katex.render(latex, el, { displayMode: true, throwOnError: false }); return; }
+            catch (e) { /* fall through to text */ }
+          }
+          el.textContent = text || latex || '';
+        };
+        rk('.ssf-phi',   f.phiLatex,   f.phiText);
+        rk('.ssf-f',     f.fLatex,     f.fText);
+        rk('.ssf-sigma', f.sigmaLatex, f.sigmaText);
+      });
+      card.querySelector('#schwarz-show-singularities').addEventListener('change', (e) => {
+        sState.showSingularities = e.target.checked;
+        if (e.target.checked) {
+          if (sState.schwarz) {
+            sState.sigmaSingularities = QD.Schwarz.findSigmaSingularities(sState.schwarz);
+            const el = document.getElementById('schwarz-sigma-sing-count');
+            const s = sState.sigmaSingularities;
+            if (el && s) el.textContent = s.poles.length + ' poles, ' + s.branchPoints.length + ' bp';
+          }
+        } else {
+          const el = document.getElementById('schwarz-sigma-sing-count');
+          if (el) el.textContent = '';
+        }
+        paintBoundaryOnTop();
+      });
+      card.querySelector('#schwarz-show-level-curves').addEventListener('change', (e) => {
+        sState.showLevelCurves = e.target.checked;
+        if (e.target.checked && sState.schwarz) {
+          _recomputeLevelCurves();
+        }
+        paintBoundaryOnTop();
+      });
+    }, 0);
+    return card;
+  }
+
+  // ---------------------------------------------------------------------------
+  // S5: Forward-dynamics card. Bundles H7 (critical orbits), E11 (curve
+  // forward-image), E10 (cycle finder), H8 (orbit sweep).
+  // ---------------------------------------------------------------------------
+  function makeForwardCard() {
+    const card = document.createElement('section');
+    card.className = 'card view-2d';
+    card.id = 'schwarz-forward-card';
+    card.innerHTML = `
+      <h2>Dynamics</h2>
+      <label style="display:block; font-size:12px; margin:4px 0;">
+        <input type="checkbox" id="schwarz-show-critical-orbits"> Show canonical-point orbits
+      </label>
+      <div style="font-size:12px; margin:8px 0 4px;"><b>Cycle finder:</b></div>
+      <label style="display:block; font-size:12px; margin:4px 0;">
+        Period: <select id="schwarz-cycle-n">
+          <option value="1">1 (fixed)</option>
+          <option value="2" selected>2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+        </select>
+        <button type="button" id="schwarz-cycle-find"
+                style="font-size:11px; margin-left:6px;">Find</button>
+        <button type="button" id="schwarz-cycle-clear"
+                style="font-size:11px; margin-left:4px;">Clear</button>
+        <span id="schwarz-cycle-count"
+              style="font-family:monospace; color:#777; margin-left:6px;"></span>
+      </label>
+      <details style="margin-top:10px;">
+        <summary style="font-size:12px; cursor:pointer; color:#555;">Advanced</summary>
+        <div style="font-size:12px; margin:6px 0 4px;">
+          <b>Curve forward-image:</b> shift-drag in Ω to draw (plane view).
+        </div>
+        <label style="display:block; font-size:12px; margin:4px 0;">
+          Iterations:
+          <input type="range" min="1" max="10" value="4" id="schwarz-curve-depth"
+                 style="vertical-align:middle; margin-left:6px; width:100px;">
+          <span id="schwarz-curve-depth-val" style="font-family:monospace;">4</span>
+          <button type="button" id="schwarz-curve-clear"
+                  style="font-size:11px; margin-left:6px;">Clear</button>
+        </label>
+        <div style="font-size:12px; margin:8px 0 4px;"><b>Orbit-family sweep:</b></div>
+        <label style="display:block; font-size:12px; margin:4px 0;">
+          N: <input type="number" id="schwarz-sweep-n" value="16" min="2" max="64"
+                    style="width:48px;">
+          Depth: <input type="number" id="schwarz-sweep-depth" value="12" min="1" max="50"
+                        style="width:48px;">
+          <button type="button" id="schwarz-sweep-compute"
+                  style="font-size:11px; margin-left:6px;">Sweep horizontal</button>
+          <button type="button" id="schwarz-sweep-clear"
+                  style="font-size:11px; margin-left:4px;">Clear</button>
+        </label>
+        <div style="font-size:12px; margin:8px 0 4px;"><b>Export PNG:</b></div>
+        <label style="display:block; font-size:12px; margin:4px 0;">
+          Multiplier:
+          <select id="schwarz-export-mult">
+            <option value="1">1× (display)</option>
+            <option value="2" selected>2×</option>
+            <option value="4">4×</option>
+          </select>
+          <button type="button" id="schwarz-export-png"
+                  style="font-size:11px; margin-left:6px;">Export PNG</button>
+        </label>
+      </details>
+    `;
+    setTimeout(() => {
+      // H7
+      card.querySelector('#schwarz-show-critical-orbits').addEventListener('change', (e) => {
+        sState.showCriticalOrbits = e.target.checked;
+        if (e.target.checked && sState.schwarz) _recomputeCriticalOrbits();
+        else sState.criticalOrbits = null;
+        paintBoundaryOnTop();
+      });
+      // E11
+      const depthSlider = card.querySelector('#schwarz-curve-depth');
+      const depthVal    = card.querySelector('#schwarz-curve-depth-val');
+      depthSlider.addEventListener('input', () => {
+        sState.curveImageDepth = +depthSlider.value;
+        depthVal.textContent = String(sState.curveImageDepth);
+        // Re-iterate the latest captured curve if any.
+        if (sState.curveImage && sState.curveImage[0]) {
+          sState.curveImage = QD.Schwarz.iterateCurveForward(
+            sState.curveImage[0], sState.schwarz, sState.curveImageDepth);
+          paintBoundaryOnTop();
+        }
+      });
+      card.querySelector('#schwarz-curve-clear').addEventListener('click', () => {
+        sState.curveImage = null;
+        sState.curveImageDraft = null;
+        paintBoundaryOnTop();
+      });
+      // E10
+      card.querySelector('#schwarz-cycle-find').addEventListener('click', _findCycles);
+      card.querySelector('#schwarz-cycle-clear').addEventListener('click', () => {
+        sState.cycles = null;
+        const el = document.getElementById('schwarz-cycle-count');
+        if (el) el.textContent = '';
+        paintBoundaryOnTop();
+      });
+      // H8
+      card.querySelector('#schwarz-sweep-compute').addEventListener('click', _computeSweep);
+      card.querySelector('#schwarz-sweep-clear').addEventListener('click', () => {
+        sState.sweepOrbits = null;
+        paintBoundaryOnTop();
+      });
+      // F8: PNG export
+      card.querySelector('#schwarz-export-png').addEventListener('click', _exportPng);
+    }, 0);
+    return card;
+  }
+
+  // Forward-dynamics feature-compute (_recomputeCriticalOrbits / _findCycles /
+  // _computeSweep / _recomputeZPanelOrbit), σ level curves
+  // (_recomputeLevelCurves), and high-res PNG export (_exportPng) ->
+  // schwarz-features.js (Phase-3 item E).
+
+  function setViewMode(mode) {
+    if (mode !== 'plane' && mode !== 'z' && mode !== 'sphere') return;
+    if (mode === sState.viewMode) return;
+    sState.viewMode = mode;
+    // Update the view-toggle highlight. Scope to the view card so the Mode
+    // card's fractal/domain seg-btns (which carry data-mode, not data-view)
+    // aren't deactivated as a side effect.
+    document.querySelectorAll('#schwarz-view-card .seg-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.view === mode);
+    });
+    _applyViewModeVisibility();
+    refreshSourceStatus();
+    if (mode === 'sphere') {
       showGLLayer(false);
       _activateSphereView();
+      return;
     }
-    refreshSourceStatus();
+    // 2D views (plane or z). Both can use the GPU — the shader's u_viewMode
+    // branch lifts z → w = φ(z) for the z-disk view; doRecompute owns the final
+    // GL visibility, this just avoids a flash on switch. (PQD families have no
+    // GPU shader and fall back to CPU automatically via activeRenderer().)
+    if (sState.sphereView) sState.sphereView.deactivate();
+    if (!sState.schwarz) { showGLLayer(false); clearCanvas(); return; }
+    showGLLayer((mode === 'plane' || mode === 'z') && activeRenderer() === 'gpu');
+    requestRecompute();
   }
 
   function _applyViewModeVisibility() {
-    const planeShow  = sState.viewMode === 'plane';
-    const sphereShow = sState.viewMode === 'sphere';
-    document.querySelectorAll('#controls-schwarz .view-plane-only')
-      .forEach(el => { el.style.display = planeShow ? '' : 'none'; });
-    document.querySelectorAll('#controls-schwarz .view-sphere-only')
-      .forEach(el => { el.style.display = sphereShow ? '' : 'none'; });
+    const mode = sState.viewMode;
+    const is2D = mode === 'plane' || mode === 'z';
+    const set = (cls, show) => {
+      document.querySelectorAll('#controls-schwarz ' + cls)
+        .forEach(el => { el.style.display = show ? '' : 'none'; });
+    };
+    set('.view-plane-only',  mode === 'plane');   // plane-only (fractal/domain, GPU)
+    set('.view-z-only',      mode === 'z');        // z-only (reserved)
+    set('.view-2d',          is2D);                // plane AND z (shared overlays)
+    set('.view-sphere-only', mode === 'sphere');
+    _applyModeOptionsVisibility();
+  }
+
+  // The fractal-options block (hover toggle + preimage-tree controls + the
+  // click/double-click hint) applies to BOTH the plane fractal view and the
+  // z-disk view (z is tiling, i.e. fractal semantics). Show it whenever we're in
+  // z or in plane-fractal mode; hide only in plane domain-coloring.
+  function _applyModeOptionsVisibility() {
+    const opts = document.getElementById('schwarz-mode-options-fractal');
+    if (opts) opts.style.display = (sState.viewMode === 'z' || sState.mode === 'fractal') ? '' : 'none';
   }
 
   // Lazy-mount QD.SphereView the first time the user switches to sphere mode;
@@ -252,16 +851,12 @@
   function makeSourceCard() {
     const card = document.createElement('section');
     card.className = 'card';
+    card.id = 'schwarz-source-card';
+    // Compact: the explanatory text lives in the "?" hover help (attachSchwarzHelp)
+    // so this — the first/most-used tile — stays small (title + status + button).
     card.innerHTML = `
-      <h2>Source φ (from Inverse tab)</h2>
-      <div class="hint">
-        The Schwarz reflection σ(w) = conj(F(ψ(w))) is built from a Riemann
-        map φ produced by the inverse solver. Solve on the Inverse tab,
-        then click <b>Use this φ</b> to snapshot it here.
-        <br>All six inverse families supported (classical bounded / unbounded,
-        and all four LQD variants).
-      </div>
-      <div id="schwarz-src-status" class="hint" style="color:#333; margin-top:8px;">
+      <h2>Source φ</h2>
+      <div id="schwarz-src-status" class="hint" style="color:#333; margin-top:2px;">
         (no φ captured)
       </div>
       <div id="schwarz-bounded-warning" class="hint"
@@ -281,9 +876,10 @@
   function makeRenderCard() {
     const card = document.createElement('section');
     card.className = 'card';
+    card.id = 'schwarz-render-card';
     card.innerHTML = `
       <h2>Render</h2>
-      <div class="row view-plane-only">
+      <div class="row view-2d">
         <label>Resolution:
           <select id="schwarz-resolution">
             <option value="192">192</option>
@@ -331,7 +927,7 @@
           <input id="schwarz-modk" type="number" min="2" max="64" value="8" style="width:52px;">
         </label>
       </div>
-      <div class="row view-plane-only" style="margin-top:8px;">
+      <div class="row view-2d" style="margin-top:8px;">
         <label>Renderer:
           <select id="schwarz-renderer">
             <option value="auto" selected>auto (GPU if available)</option>
@@ -340,11 +936,11 @@
           </select>
         </label>
       </div>
-      <div class="row view-plane-only" style="margin-top:10px;">
+      <div class="row view-2d" style="margin-top:10px;">
         <button id="schwarz-recompute" class="small">Recompute</button>
-        <button id="schwarz-fit" class="small" style="margin-left:6px;">Fit to Ω</button>
+        <button id="schwarz-fit" class="small" style="margin-left:6px;">Fit</button>
       </div>
-      <div id="schwarz-progress" class="hint view-plane-only" style="margin-top:8px; min-height:1.2em;"></div>
+      <div id="schwarz-progress" class="hint view-2d" style="margin-top:8px; min-height:1.2em;"></div>
     `;
     setTimeout(() => {
       document.getElementById('schwarz-renderer').addEventListener('change', e => {
@@ -360,37 +956,36 @@
         sState.grid.maxIter = Math.max(1, Math.min(200, +e.target.value || 24));
         // Broadcast to sphere view too — same shared sliders for both renderers.
         if (sState.sphereView) sState.sphereView.setRenderParams({ maxIter: sState.grid.maxIter });
-        if (sState.viewMode === 'plane') requestRecompute();
+        if (sState.viewMode !== 'sphere') requestRecompute();   // plane + z re-iterate
       });
+      // Recolor the current field without recomputing: GPU re-renders (plane or
+      // z-disk — renderImmediate handles both), CPU repaints the existing field.
+      const recolor = () => {
+        const is2D = sState.viewMode === 'plane' || sState.viewMode === 'z';
+        if (is2D && activeRenderer() === 'gpu') renderImmediate();
+        else if (sState.viewMode !== 'sphere') repaintField();
+      };
       document.getElementById('schwarz-colormap').addEventListener('change', e => {
         sState.grid.colormap = e.target.value;
         if (sState.sphereView) sState.sphereView.setRenderParams({ colormap: sState.grid.colormap });
-        if (sState.viewMode === 'plane') {
-          // For GPU, just re-render (very fast). For CPU, repaint existing field.
-          if (activeRenderer() === 'gpu') renderImmediate();
-          else repaintField();
-        }
+        recolor();
       });
       document.getElementById('schwarz-scalemode').addEventListener('change', e => {
         sState.grid.scaleMode = e.target.value;
         updateModKVisibility();
         if (sState.sphereView) sState.sphereView.setRenderParams({ scaleMode: sState.grid.scaleMode });
-        if (sState.viewMode === 'plane') {
-          if (activeRenderer() === 'gpu') renderImmediate();
-          else repaintField();
-        }
+        recolor();
       });
       document.getElementById('schwarz-modk').addEventListener('change', e => {
         sState.grid.modK = Math.max(2, Math.min(64, +e.target.value || 8));
         if (sState.sphereView) sState.sphereView.setRenderParams({ modK: sState.grid.modK });
-        if (sState.viewMode === 'plane' && sState.grid.scaleMode === 'modulo') {
-          if (activeRenderer() === 'gpu') renderImmediate();
-          else repaintField();
-        }
+        if (sState.grid.scaleMode === 'modulo') recolor();
       });
       updateModKVisibility();
       document.getElementById('schwarz-recompute').addEventListener('click', requestRecompute);
-      document.getElementById('schwarz-fit').addEventListener('click', fitToOmega);
+      document.getElementById('schwarz-fit').addEventListener('click', () => {
+        if (sState.viewMode === 'z') fitToDisk(); else fitToOmega();
+      });
     }, 0);
     return card;
   }
@@ -402,13 +997,15 @@
 
   function makeInfoCard() {
     const card = document.createElement('section');
-    card.className = 'card view-plane-only';
+    card.className = 'card view-2d';
+    card.id = 'schwarz-info-card';
     card.innerHTML = `
       <h2>Click & hover</h2>
       <div class="hint">
-        <b>Double-click</b> on Ω → plot the orbit {w₀, σ(w₀), σ²(w₀), …}<br>
-        <b>Hover</b> → show pixel coords + escape time.<br>
-        <b>Drag</b> to pan; <b>wheel</b> to zoom.
+        <b>Single-click</b> in Ω → pin the forward σ-orbit.<br>
+        <b>Double-click</b> in the tiling set → seed a preimage tree.<br>
+        <b>Hover</b> → coordinates + escape time; <b>drag</b> pans, <b>wheel</b> zooms.<br>
+        In the <b>z-disk</b> view, clicks map through z ↦ φ(z).
       </div>
       <div id="schwarz-readout" class="hint" style="font-family:ui-monospace,Consolas,monospace; margin-top:8px; min-height:1.4em;">
         —
@@ -431,6 +1028,10 @@
         case 'boundedLQD_singular':   famLabel = 'bounded singular LQD';   break;
         case 'unboundedLQD':          famLabel = 'unbounded LQD';          break;
         case 'unboundedLQD_singular': famLabel = 'unbounded singular LQD'; break;
+        case 'powerQD':               famLabel = `bounded PQD (α=${phi.alpha || '?'})`; break;
+        case 'powerQD_singular':      famLabel = `bounded singular PQD (α=${phi.alpha || '?'})`; break;
+        case 'unboundedPQD':          famLabel = `unbounded PQD (α=${phi.alpha || '?'})`; break;
+        case 'unboundedPQD_singular': famLabel = `unbounded singular PQD (α=${phi.alpha || '?'})`; break;
         default: famLabel = phi.unbounded ? 'unbounded QD' : 'bounded QD';
       }
       const polyLen = (phi.polyA || phi.F || []).length;
@@ -458,19 +1059,23 @@
   }
 
   function captureFromInverseTab() {
-    if (typeof state === 'undefined' || !state.current || !state.current.success) {
+    // Prefer the QD.PrimarySolution envelope (HANDOFF — P0 refactor); fall
+    // back to the legacy state.current read for any unanticipated load order.
+    const envelope = (QD.PrimarySolution && QD.PrimarySolution.get())
+                  || (typeof state !== 'undefined' ? state.current : null);
+    if (!envelope || !envelope.success) {
       alert('No successful Inverse-tab solution yet. Solve on the Inverse tab first.');
       return;
     }
-    const sol = state.current.primary;
+    const sol = envelope.primary;
     if (!sol || !sol.phi) { alert('Inverse-tab primary solution missing φ.'); return; }
     // All six families are supported: classical bounded/unbounded (which
     // don't set phi.family — see HANDOFF gotcha #1) plus all four LQD
     // families. No allowlist to enforce.
     sState.phiSnapshot = clonePhi(sol.phi);
-    // hData lives on state.current, NOT on the primary sol — keep them
+    // hData lives on the envelope, NOT on the primary sol — keep them
     // separate so we can read either path without surprise.
-    const hData = state.current.hData;
+    const hData = envelope.hData;
     sState.hDataSnapshot = hData ? cloneHData(hData) : null;
     // Boundary samples: re-derive from φ via the adaptive sampler. 512
     // samples is the larger of plane (was 384) and sphere (512) defaults —
@@ -485,7 +1090,8 @@
     }
     sState.schwarz = QD.Schwarz.buildSchwarzFromPhi(
       sState.phiSnapshot, sState.hDataSnapshot, sState.boundarySnapshot);
-    sState.orbit = [];
+    sState.orbit = []; sState.pinnedOrbit = []; sState.hoverOrbit = null;
+    sState.preimageTree = null;
 
     // Try to bring up the GPU renderer (idempotent: only created once).
     ensureGPU();
@@ -511,8 +1117,11 @@
     }
 
     refreshSourceStatus();
+    frameDisk();                       // pre-frame the z-view so a later switch is ready
     if (sState.viewMode === 'plane') {
       fitToOmega();
+    } else if (sState.viewMode === 'z') {
+      requestRecompute();
     } else if (sState.sphereView) {
       sState.sphereView.requestRender();
     }
@@ -547,6 +1156,22 @@
       mainC.style.zIndex   = '1';
       mainC.style.background = 'transparent';
       plotArea.insertBefore(glC, mainC);
+      // WebGL context-loss recovery (attached once, with the canvas). On loss
+      // every GL object dies, so drop the renderer → activeRenderer() falls back
+      // to CPU until the context returns; on restore, recreate the renderer and
+      // re-render. (The renderer's own listener calls preventDefault, which is
+      // what lets the browser fire 'restored' at all.)
+      glC.addEventListener('webglcontextlost', () => {
+        sState.gpu = null;
+        sState.gpuMsg = 'GPU context lost; using CPU until it is restored.';
+      }, false);
+      glC.addEventListener('webglcontextrestored', () => {
+        sState.gpu = null; sState.gpuMsg = '';
+        ensureGPU();
+        if (sState.schwarz && isSchwarzActive() && sState.viewMode === 'plane') {
+          requestRecompute();
+        }
+      }, false);
     }
     try {
       sState.gpu = QD.Schwarz.createGPURenderer(glC);
@@ -569,28 +1194,15 @@
   }
 
   function clonePhi(phi) {
-    // Deep-enough copy for our purposes. The inverse solver uses `polyA` for
-    // the Laurent part on unbounded; some other paths use `F`. Carry both.
-    // `lqdBeta` (polynomial-h β-correction, HANDOFF #22) and `lqdGamma`
-    // (higher-order pole at origin, HANDOFF #24) must also be preserved so
-    // the Schwarz adapters can evaluate the full φ.
-    const out = {
-      family:    phi.family,
-      unbounded: phi.unbounded,
-      w0:        phi.w0 ? { re: phi.w0.re, im: phi.w0.im } : undefined,
-      c:         phi.c,
-      q:         phi.q     ? { re: phi.q.re,     im: phi.q.im }     : undefined,
-      gamma:     phi.gamma ? { re: phi.gamma.re, im: phi.gamma.im } : undefined,
-      z0:        phi.z0    ? { re: phi.z0.re,    im: phi.z0.im }    : undefined,
-      polyA:     phi.polyA ? phi.polyA.map(c => ({ re: c.re, im: c.im })) : undefined,
-      F:         phi.F     ? phi.F    .map(c => ({ re: c.re, im: c.im })) : undefined,
-      branches:  phi.branches ? phi.branches.map(b => ({
-        z: { re: b.z.re, im: b.z.im },
-        A: b.A.map(a => ({ re: a.re, im: a.im })),
-      })) : [],
-      lqdBeta:   phi.lqdBeta  ? phi.lqdBeta .map(c => ({ re: c.re, im: c.im })) : [],
-      lqdGamma:  phi.lqdGamma ? phi.lqdGamma.map(c => ({ re: c.re, im: c.im })) : [],
-    };
+    // Delegate to the canonical QD.clonePhi so EVERY family-specific field
+    // (alpha for PQDs, lqdBeta/lqdGamma for LQDs, z0/gamma/q, polyA, branches)
+    // is carried through a single source of truth. Layer on only the UI-only
+    // `F` field (Laurent companion the Schwarz inverse path attaches) that the
+    // canonical clone does not know about. Maintaining a second hand-rolled
+    // clone here is what silently dropped lqdBeta (HANDOFF #26) and then alpha
+    // (PQD captures → NaN powers); the delegation removes that drift class.
+    const out = QD.clonePhi(phi);
+    out.F = phi.F ? phi.F.map(c => ({ re: c.re, im: c.im })) : undefined;
     return out;
   }
   function cloneHData(h) {
@@ -609,158 +1221,40 @@
   function getCanvas() { return document.getElementById('canvas'); }
   function getCtx()    { const c = getCanvas(); return c ? c.getContext('2d') : null; }
 
-  let dragging = false, dragMoved = false, lastX = 0, lastY = 0;
-  function attachCanvasHandlers() {
-    const c = getCanvas();
-    if (!c) return;
-    c.addEventListener('mousemove', onMouseMove);
-    c.addEventListener('mouseleave', () => {
-      const r = document.getElementById('schwarz-readout');
-      if (r) r.textContent = '—';
-    });
-    // Orbit on DOUBLE click only. Single click is reserved for click-and-drag
-    // panning (and for not adding an unwanted orbit).
-    c.addEventListener('dblclick', onDoubleClickOrbit);
-    c.addEventListener('wheel', onWheel, { passive: false });
-    c.addEventListener('mousedown', e => {
-      if (e.button !== 0) return;
-      dragging = true; dragMoved = false;
-      lastX = e.clientX; lastY = e.clientY;
-      c.style.cursor = 'grabbing';
-    });
-    window.addEventListener('mousemove', e => {
-      if (!dragging || !isSchwarzActive()) return;
-      const dx = e.clientX - lastX, dy = e.clientY - lastY;
-      if (dx !== 0 || dy !== 0) dragMoved = true;
-      lastX = e.clientX; lastY = e.clientY;
-      sState.view.cx -= dx / sState.view.scale;
-      sState.view.cy += dy / sState.view.scale;          // screen y is flipped
-      // GPU is fast enough (10-30 ms typical) to render every mousemove
-      // without debounce. CPU mode debounces because the pyramid is slow.
-      if (activeRenderer() === 'gpu') renderImmediate();
-      else { clearOverlay(); requestRecompute(); }
-    });
-    window.addEventListener('mouseup', () => {
-      if (!dragging) return;
-      dragging = false;
-      c.style.cursor = '';
-      // After a real drag (mouse moved), trigger a fresh render so the
-      // final position is sharp even in CPU mode.
-      if (dragMoved && activeRenderer() !== 'gpu') requestRecompute();
-    });
-  }
-
-  // Synchronous GPU re-render. Used during drag/zoom in GPU mode.
+  // Canvas interaction -> schwarz-interaction.js (Phase-3 item E). The drag
+  // state + attachCanvasHandlers + the handlers below are installed near the
+  // end of this file; renderImmediate (used by render too) stays here.
+  // Synchronous GPU re-render. Used during drag/zoom in GPU mode for both the
+  // plane and z-disk views (the shader's u_viewMode branch lifts z → w = φ(z)).
   function renderImmediate() {
     if (!sState.schwarz || !sState.gpu || activeRenderer() !== 'gpu') return;
+    // Belt-and-suspenders: never re-show the GL layer / paint when the Schwarz
+    // tab isn't active (e.g. a late control event after a tab switch).
+    if (!isSchwarzActive()) return;
+    const inZ = sState.viewMode === 'z';
     showGLLayer(true);
     try {
       sState.gpu.setColormap(sState.grid.colormap);
-      sState.gpu.render(sState.view, {
+      sState.gpu.render(inZ ? sState.zView : sState.view, {
         maxIter:   sState.grid.maxIter,
         scaleMode: sState.grid.scaleMode,
         modK:      sState.grid.modK,
+        viewMode:  inZ ? 'z' : 'w',
       });
-      paintBoundaryOnTop();
-      paintOrbit();
+      if (inZ) {
+        paintZView(true);
+      } else {
+        paintBoundaryOnTop();
+        paintOrbit();
+      }
     } catch (e) {
       // Fall through silently; the next debounced recompute will surface
       // any persistent error.
     }
   }
 
-  function clearOverlay() {
-    const ctx = getCtx(); if (!ctx) return;
-    syncCanvasSize();
-    ctx.clearRect(0, 0, sState.view.cssW, sState.view.cssH);
-  }
-  function isSchwarzActive() {
-    const panel = document.getElementById('controls-schwarz');
-    return panel && !panel.hidden;
-  }
-  function onWheel(e) {
-    if (!isSchwarzActive() || !sState.schwarz) return;
-    e.preventDefault();
-    const c = getCanvas();
-    const rect = c.getBoundingClientRect();
-    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
-    const w = pixelToWorld(sx, sy);
-    const k = (e.deltaY > 0) ? 0.85 : 1.18;
-    sState.view.scale *= k;
-    // Keep the world point under the cursor pinned in screen space.
-    const after = pixelToWorld(sx, sy);
-    sState.view.cx += w.re - after.re;
-    sState.view.cy += w.im - after.im;
-    if (activeRenderer() === 'gpu') renderImmediate();
-    else { clearOverlay(); requestRecompute(); }
-  }
-  function onMouseMove(e) {
-    if (!isSchwarzActive() || !sState.schwarz) return;
-    const c = getCanvas();
-    const rect = c.getBoundingClientRect();
-    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
-    const w = pixelToWorld(sx, sy);
-    let info = `w = (${w.re.toFixed(3)}, ${w.im.toFixed(3)})`;
-    if (sState.field && sState.fieldW > 0) {
-      const gx = Math.floor(sx / sState.view.cssW  * sState.fieldW);
-      const gy = Math.floor(sy / sState.view.cssH  * sState.fieldH);
-      if (gx >= 0 && gx < sState.fieldW && gy >= 0 && gy < sState.fieldH) {
-        const idx = gy * sState.fieldW + gx;
-        const n = sState.field[idx];
-        const kind = sState.fieldKind ? sState.fieldKind[idx] : KIND_OUTSIDE;
-        info += '  ' + describeKind(kind, n);
-      }
-    } else if (activeRenderer() === 'gpu' && QD.Schwarz && QD.Schwarz.escapeTime) {
-      // GPU-mode parity (HANDOFF #33): the field array isn't populated in
-      // GPU mode, so do an ad-hoc per-cursor CPU iteration. Cheap — at most
-      // `maxIter` σ-evals (μs scale on typical scenarios).
-      try {
-        const et = QD.Schwarz.escapeTime(w, sState.schwarz, { maxIter: sState.grid.maxIter });
-        // escapeTime returns kind as a string; map to the KIND_* enum
-        // used by describeKind. Note: a pixel that was already outside Ω
-        // returns kind='fundamental' n=0 — display it as KIND_OUTSIDE.
-        const kindMap = { fundamental: KIND_FUND, escaped: KIND_ESC,
-                          interior: KIND_INT, invalid: KIND_INV };
-        let kindI = (et && kindMap[et.kind] != null) ? kindMap[et.kind] : KIND_OUTSIDE;
-        if (kindI === KIND_FUND && (et.n | 0) === 0) kindI = KIND_OUTSIDE;
-        info += '  ' + describeKind(kindI, et ? (et.n | 0) : 0);
-      } catch (err) { /* swallow; coordinate readout still shown */ }
-    }
-    const r = document.getElementById('schwarz-readout');
-    if (r) r.textContent = info;
-  }
-  function describeKind(kind, n) {
-    switch (kind) {
-      case KIND_FUND:    return 'escape time n=' + n;
-      case KIND_ESC:     return 'in escaping set';
-      case KIND_INT:     return 'still in Ω after maxIter (tiling-set interior)';
-      case KIND_INV:     return 'Newton diverged';
-      case KIND_OUTSIDE: return 'in Ω^c (fundamental tile)';
-      default:           return '';
-    }
-  }
-  function onDoubleClickOrbit(e) {
-    if (!isSchwarzActive() || !sState.schwarz) return;
-    // dblclick can fire after the user double-clicks at the end of a drag —
-    // guard against that with the dragMoved sentinel.
-    if (dragMoved) return;
-    const c = getCanvas();
-    const rect = c.getBoundingClientRect();
-    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
-    const w = pixelToWorld(sx, sy);
-    if (!sState.schwarz.isInOmega(w)) {
-      sState.orbit = [];
-    } else {
-      sState.orbit = QD.Schwarz.makeOrbit(w, sState.schwarz, { maxIter: sState.grid.maxIter });
-    }
-    // Just redraw the overlay; the GPU fractal layer doesn't need re-render.
-    if (activeRenderer() === 'gpu') {
-      paintBoundaryOnTop();
-      paintOrbit();
-    } else {
-      paintAll();
-    }
-  }
+  // Canvas interaction (clearOverlay / isSchwarzActive / wheel / mousemove /
+  // hover / click / dblclick / pin) -> schwarz-interaction.js (Phase-3 item E).
 
   // ---------------------------------------------------------------------------
   // Coordinate transforms.
@@ -779,6 +1273,22 @@
       y: cssH / 2 - (im - cy) * scale,
     };
   }
+  // z-plane (unit-disk) transforms — parallel to pixelToWorld/worldToPixel but
+  // reading sState.zView, so the z-view has its own independent pan/zoom.
+  function pixelToZ(sx, sy) {
+    const { cx, cy, scale, cssW, cssH } = sState.zView;
+    return {
+      re: cx + (sx - cssW / 2) / scale,
+      im: cy - (sy - cssH / 2) / scale,
+    };
+  }
+  function zToPixel(re, im) {
+    const { cx, cy, scale, cssW, cssH } = sState.zView;
+    return {
+      x: cssW / 2 + (re - cx) * scale,
+      y: cssH / 2 - (im - cy) * scale,
+    };
+  }
   function fitToOmega() {
     if (!sState.boundarySnapshot || !sState.boundarySnapshot.length) return;
     const b = QD.Schwarz.polygonBounds(sState.boundarySnapshot);
@@ -789,346 +1299,110 @@
     sState.view.scale = Math.min(sState.view.cssW, sState.view.cssH) / (2 * b.radius * margin);
     requestRecompute();
   }
+  // Frame the z-view on the unit disk (bounded: 𝔻 fills ~82% of the shorter
+  // half; unbounded: show |z| up to ~2.5 so 𝔻* is visible). Sets the transform
+  // only; fitToDisk also kicks a recompute.
+  function frameDisk() {
+    syncCanvasSize();
+    sState.zView.cx = 0;
+    sState.zView.cy = 0;
+    const unb  = !!(sState.phiSnapshot && sState.phiSnapshot.unbounded);
+    const half = Math.min(sState.zView.cssW, sState.zView.cssH) / 2;
+    sState.zView.scale = unb ? (half * 0.9) / 2.5 : half * 0.82;
+  }
+  function fitToDisk() { frameDisk(); requestRecompute(); }
   function syncCanvasSize() {
     const c = getCanvas();
     if (!c) return;
     const rect = c.getBoundingClientRect();
     sState.view.cssW = Math.max(50, rect.width);
     sState.view.cssH = Math.max(50, rect.height);
+    // The z-view shares the same physical canvas, so its css dims track view's.
+    sState.zView.cssW = sState.view.cssW;
+    sState.zView.cssH = sState.view.cssH;
+  }
+
+  // True when the Schwarz tab is the active tab (its controls panel is shown).
+  // Single predicate for the render-entry / resize / context-restore guards, so
+  // a late timer / global event can't paint into another tab. (Hoisted, so the
+  // resize listener above and the installSchwarzRender injection below can both
+  // use it regardless of source order.)
+  function isSchwarzActive() {
+    const p = document.getElementById('controls-schwarz');
+    return !!p && !p.hidden;
   }
 
   // ---------------------------------------------------------------------------
   // Progressive renderer.
   // ---------------------------------------------------------------------------
-  let recomputeTimer = null;
-  function requestRecompute() {
-    if (recomputeTimer) clearTimeout(recomputeTimer);
-    recomputeTimer = setTimeout(() => { recomputeTimer = null; doRecompute(); }, 80);
-  }
-
-  function doRecompute() {
-    if (!sState.schwarz) { clearCanvas(); return; }
-    syncCanvasSize();
-
-    // GPU path: synchronous, complete in one frame.
-    if (activeRenderer() === 'gpu') {
-      showGLLayer(true);
-      const t0 = performance.now();
-      try {
-        sState.gpu.setColormap(sState.grid.colormap);
-        sState.gpu.render(sState.view, {
-          maxIter:   sState.grid.maxIter,
-          scaleMode: sState.grid.scaleMode,
-          modK:      sState.grid.modK,
-        });
-      } catch (e) {
-        // GPU render failed (e.g. context lost). Fall through to CPU path.
-        sState.gpuMsg = 'GPU render failed; using CPU. ' + (e.message || e);
-        // Continue below — CPU pyramid.
-      }
-      if (!sState.gpuMsg || sState.gpuMsg.indexOf('failed') === -1) {
-        // Field/fieldKind aren't populated under GPU rendering — hover readout
-        // will fall back to coordinates-only.
-        sState.field = null; sState.fieldKind = null;
-        // Boundary + orbit overlays drawn on top (no field clearing needed).
-        paintBoundaryOnTop();
-        paintOrbit();
-        const ms = (performance.now() - t0).toFixed(0);
-        setProgress('GPU render: ' + ms + ' ms' + (sState.gpuMsg ? '  (' + sState.gpuMsg + ')' : ''));
-        return;
-      }
-    }
-
-    // CPU progressive pyramid path. Hide the GL layer so a stale GPU image
-    // doesn't peek through edge cases.
-    showGLLayer(false);
-    const myToken = ++sState.renderToken;
-    sState.rendering = true;
-    setProgress('Pass 1/3 (coarse) ...');
-    // Allocate field at target resolution.
-    const res = sState.grid.resolution;
-    const aspect = sState.view.cssW / sState.view.cssH;
-    let W, H;
-    if (aspect >= 1) { W = res; H = Math.max(1, Math.round(res / aspect)); }
-    else             { H = res; W = Math.max(1, Math.round(res * aspect)); }
-    sState.field     = new Int16Array(W * H);
-    sState.fieldKind = new Uint8Array(W * H);
-    sState.fieldW = W; sState.fieldH = H;
-
-    // Pass 1: every 4th pixel → fill 4×4 blocks.
-    // Pass 2: every 2nd pixel → fill 2×2 blocks (only un-resolved cells).
-    // Pass 3: per-pixel.
-    chainPass(myToken, 4, () =>
-      chainPass(myToken, 2, () =>
-        chainPass(myToken, 1, () => {
-          if (myToken !== sState.renderToken) return;
-          sState.rendering = false;
-          setProgress('');
-          paintAll();
-        })));
-  }
-
-  function chainPass(token, stride, next) {
-    if (token !== sState.renderToken) return;
-    setProgress('Pass ' + (4 / stride | 0) + (stride === 1 ? '/3 (full)…' : '/3 (refining)…'));
-    const W = sState.fieldW, H = sState.fieldH;
-    const sw = sState.schwarz;
-    const maxIter = sState.grid.maxIter;
-    // Map field coords → world.
-    const cssW = sState.view.cssW, cssH = sState.view.cssH;
-    const cx = sState.view.cx, cy = sState.view.cy, scale = sState.view.scale;
-    const pxPerCellX = cssW / W, pxPerCellY = cssH / H;
-
-    let row = 0;
-    // Per-row warm-start chain: the converged ψ-seed from the left neighbor
-    // (same row, prior col) is reused as initialSeedHint for the current pixel.
-    // Adjacent pixels in w-space land on adjacent z-values in 𝔻, so Newton
-    // typically converges in 1–3 iters instead of 5–10. Reset at row start.
-    let leftSeed = null;
-    function chunk() {
-      if (token !== sState.renderToken) return;
-      const tStart = performance.now();
-      while (row < H) {
-        leftSeed = null;
-        for (let col = 0; col < W; col++) {
-          if ((row % stride) !== 0 || (col % stride) !== 0) continue;
-          const idx = row * W + col;
-          if (sState.fieldKind[idx] && stride > 1) continue;
-          const px = (col + 0.5) * pxPerCellX;
-          const py = (row + 0.5) * pxPerCellY;
-          const wRe = cx + (px - cssW / 2) / scale;
-          const wIm = cy - (py - cssH / 2) / scale;
-          const wpt = { re: wRe, im: wIm };
-          if (!sw.isInOmega(wpt)) {
-            sState.field[idx] = 0;
-            sState.fieldKind[idx] = KIND_OUTSIDE + 1;
-            // leftSeed stays — outside pixels don't update the chain.
-          } else {
-            const et = QD.Schwarz.escapeTime(wpt, sw, { maxIter, initialSeedHint: leftSeed });
-            sState.field[idx] = et.n;
-            sState.fieldKind[idx] =
-              (et.kind === 'fundamental' ? KIND_FUND :
-               et.kind === 'escaped'     ? KIND_ESC  :
-               et.kind === 'interior'    ? KIND_INT  :
-                                           KIND_INV) + 1;
-            // Carry forward only if ψ converged to a usable seed.
-            if (et.firstZ) leftSeed = et.firstZ;
-          }
-        }
-        row++;
-        if (performance.now() - tStart > 14) {
-          requestAnimationFrame(chunk);
-          paintAll();
-          return;
-        }
-      }
-      // After this pass: fill in any cells skipped by larger stride with the
-      // nearest sampled value (for the coarse-display effect).
-      fillFromCoarseSamples(stride);
-      paintAll();
-      next();
-    }
-    requestAnimationFrame(chunk);
-  }
-
-  // Fill un-resolved cells (kind === 0) with their nearest stride-aligned
-  // neighbor's value, so the coarse pass shows blocky filled-in content.
-  function fillFromCoarseSamples(stride) {
-    const W = sState.fieldW, H = sState.fieldH;
-    for (let row = 0; row < H; row++) {
-      const rAnchor = row - (row % stride);
-      for (let col = 0; col < W; col++) {
-        const idx = row * W + col;
-        if (sState.fieldKind[idx]) continue;
-        const cAnchor = col - (col % stride);
-        const aIdx = rAnchor * W + cAnchor;
-        sState.field[idx]     = sState.field[aIdx];
-        sState.fieldKind[idx] = sState.fieldKind[aIdx];
-      }
-    }
-  }
+  // Progressive renderer -> schwarz-render.js (Phase-3 item E). requestRecompute
+  // (the debounced entry) + doRecompute + the CPU pyramid (_renderCpuPyramid /
+  // _renderCpuViaWorker / chainPass / fillFromCoarseSamples) are installed after
+  // the paint install below; the rest of this file calls requestRecompute by the
+  // forward-declared name. The module reads sState + the paint fns + a few
+  // GPU/geometry helpers via sCtx.
 
   // ---------------------------------------------------------------------------
   // Painting.
   // ---------------------------------------------------------------------------
-  function clearCanvas() {
-    const ctx = getCtx(); if (!ctx) return;
-    syncCanvasSize();
-    ctx.clearRect(0, 0, sState.view.cssW, sState.view.cssH);
-    ctx.fillStyle = '#fafafa';
-    ctx.fillRect(0, 0, sState.view.cssW, sState.view.cssH);
-    ctx.fillStyle = '#777';
-    ctx.font = '13px system-ui, sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('Solve on the Inverse tab and click “Use this φ” to begin.',
-                 sState.view.cssW/2, sState.view.cssH/2);
-  }
+  // ---------------------------------------------------------------------------
+  // Painting + colormaps -> schwarz-paint.js (Phase-3 item E). The 2D-canvas
+  // rendering-output layer is installed here; the rest of this file calls the
+  // captured names (forward-declared near the top). The module reads sState +
+  // getCtx / syncCanvasSize / worldToPixel + the KIND_* constants via sCtx.
+  // ---------------------------------------------------------------------------
+  ({
+    clearCanvas, paintAll, repaintField, paintBoundaryOnTop, paintOrbit,
+    paintPreimageTree, paintLimitSet, paintZView, setProgress,
+  } = window.QD_UI.installSchwarzPaint({
+    sState, getCtx, syncCanvasSize, worldToPixel, zToPixel, activeRenderer,
+    KIND_FUND, KIND_ESC, KIND_INT, KIND_INV, KIND_OUTSIDE,
+  }));
 
-  function paintAll() {
-    const ctx = getCtx(); if (!ctx) return;
-    syncCanvasSize();
-    paintField();
-    paintBoundary();
-    paintOrbit();
-  }
-  function repaintField() { if (sState.field) paintAll(); }
+  // Progressive renderer (installed after paint so its paint deps are on sCtx).
+  ({ requestRecompute } = window.QD_UI.installSchwarzRender({
+    sState, clearCanvas, paintAll, paintBoundaryOnTop, paintOrbit, paintZView,
+    setProgress, syncCanvasSize, activeRenderer, showGLLayer, isSchwarzActive,
+    KIND_FUND, KIND_ESC, KIND_INT, KIND_INV, KIND_OUTSIDE,
+  }));
 
-  // Used after a GPU render: WebGL has already drawn the fractal to the
-  // sibling #schwarz-gl-canvas. We clear the main 2D canvas to transparent
-  // and draw only the boundary + orbit overlays on top.
-  function paintBoundaryOnTop() {
-    const ctx = getCtx(); if (!ctx) return;
-    ctx.clearRect(0, 0, sState.view.cssW, sState.view.cssH);
-    paintBoundary();
-  }
+  // Feature-compute methods (installed after paint+render so their paint deps
+  // are on sCtx; before interaction, which destructures the recompute hooks).
+  ({
+    _recomputeDomainColoring, _rebuildPreimageTreeIfActive, _refreshPreimageTreeStats,
+    _computeLimitSet, _clearLimitSet, _recomputeCriticalOrbits, _findCycles,
+    _exportPng, _recomputeZPanelOrbit, _computeSweep, _recomputeLevelCurves,
+  } = window.QD_UI.installSchwarzFeatures({
+    sState, paintBoundaryOnTop, paintPreimageTree, paintLimitSet,
+    activeRenderer, getCtx, getCanvas,
+  }));
 
-  // Cached off-screen canvas + ImageData buffer for CPU repaint. Re-created
-  // only when (W, H) change — avoids allocating a few MB on every paint
-  // during the progressive pyramid passes.
-  let offC = null, offCtx = null, offImg = null;
-  function ensureOffscreen(W, H) {
-    if (offC && offC.width === W && offC.height === H) return;
-    offC = document.createElement('canvas');
-    offC.width = W; offC.height = H;
-    offCtx = offC.getContext('2d');
-    offImg = offCtx.createImageData(W, H);
-  }
-
-  function paintField() {
-    const ctx = getCtx();
-    const W = sState.fieldW, H = sState.fieldH;
-    if (!sState.field || !W || !H) return;
-    ensureOffscreen(W, H);
-    const imgData = offImg;
-    const maxIter = sState.grid.maxIter;
-    const cmap = sState.grid.colormap;
-    for (let i = 0; i < W * H; i++) {
-      const kind = sState.fieldKind[i];
-      const n    = sState.field[i];
-      let r = 0, g = 0, b = 0;
-      if (kind === KIND_OUTSIDE + 1)        { r = 245; g = 245; b = 248; }     // fundamental tile
-      else if (kind === KIND_INT + 1)       { r = 28;  g = 28;  b = 36;  }     // interior (tiling-set limit)
-      else if (kind === KIND_ESC + 1)       { r = 80;  g = 80;  b = 90;  }     // escaping set
-      else if (kind === KIND_INV + 1)       { r = 180; g = 90;  b = 90;  }     // bad pixel
-      else if (kind === KIND_FUND + 1) {
-        const t = cpuComputeT(n, maxIter, sState.grid.scaleMode, sState.grid.modK);
-        const c = colormap(cmap, t);
-        r = c[0]; g = c[1]; b = c[2];
-      }
-      const j = i * 4;
-      imgData.data[j]   = r;
-      imgData.data[j+1] = g;
-      imgData.data[j+2] = b;
-      imgData.data[j+3] = 255;
-    }
-    offCtx.putImageData(imgData, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, sState.view.cssW, sState.view.cssH);
-    ctx.drawImage(offC, 0, 0, sState.view.cssW, sState.view.cssH);
-  }
-
-  function paintBoundary() {
-    const pts = sState.boundarySnapshot;
-    if (!pts || !pts.length) return;
-    const ctx = getCtx();
-    ctx.strokeStyle = '#1a3e7a';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    const p0 = worldToPixel(pts[0].re, pts[0].im);
-    ctx.moveTo(p0.x, p0.y);
-    for (let i = 1; i < pts.length; i++) {
-      const p = worldToPixel(pts[i].re, pts[i].im);
-      ctx.lineTo(p.x, p.y);
-    }
-    ctx.closePath();
-    ctx.stroke();
-  }
-
-  function paintOrbit() {
-    const pts = sState.orbit;
-    if (!pts || pts.length === 0) return;
-    const ctx = getCtx();
-    // Connecting line.
-    ctx.strokeStyle = 'rgba(20, 160, 60, 0.95)';
-    ctx.lineWidth = 1.3;
-    ctx.beginPath();
-    for (let i = 0; i < pts.length; i++) {
-      const p = worldToPixel(pts[i].re, pts[i].im);
-      if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
-    }
-    ctx.stroke();
-    // Dots.
-    for (let i = 0; i < pts.length; i++) {
-      const p = worldToPixel(pts[i].re, pts[i].im);
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, i === 0 ? 4.5 : 2.8, 0, 2 * Math.PI);
-      ctx.fillStyle = i === 0 ? '#108a40' : 'rgba(20, 160, 60, 0.85)';
-      ctx.fill();
-      if (i === 0) {
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-      }
-    }
-  }
-
-  function setProgress(msg) {
-    const el = document.getElementById('schwarz-progress');
-    if (el) el.textContent = msg;
-  }
+  // Canvas interaction (installed after paint+render so its renderer/paint deps
+  // are available; reads the per-feature recompute hooks + geometry via sCtx).
+  _schwarzInter = window.QD_UI.installSchwarzInteraction({
+    sState, getCanvas, getCtx, pixelToWorld, worldToPixel, pixelToZ, zToPixel,
+    syncCanvasSize, activeRenderer, renderImmediate, requestRecompute,
+    paintBoundaryOnTop, paintOrbit, paintAll, paintPreimageTree,
+    gateMaxIter, _recomputeLevelCurves, _recomputeDomainColoring,
+    _recomputeZPanelOrbit, _refreshPreimageTreeStats,
+    KIND_FUND, KIND_ESC, KIND_INT, KIND_INV, KIND_OUTSIDE,
+  });
+  ({ attachCanvasHandlers, onCanvasClick, onCanvasDblClick, onMouseMove,
+     runHoverOrbit, pinOrbitAt } = _schwarzInter);
 
   // ---------------------------------------------------------------------------
-  // Colormaps + scale modes. Tables match schwarz-webgl.js so CPU and GPU
-  // outputs render the same colors for the same input.
+  // Test-only hook (see node-test.js). Opt-in via a window sentinel so a normal
+  // browser load NEVER attaches it. Exposes the fractal-mode interaction
+  // handlers + state so the click/dblclick disambiguation and the tiling-set
+  // seed gate can be unit-tested without mounting the sidebar.
   // ---------------------------------------------------------------------------
-  function cpuComputeT(n, maxIter, scaleMode, modK) {
-    if (scaleMode === 'log') {
-      return Math.min(1, Math.max(0, Math.log(n + 1) / Math.log(maxIter + 1)));
-    }
-    if (scaleMode === 'sqrt') {
-      return Math.min(1, Math.max(0, Math.sqrt(n / maxIter)));
-    }
-    if (scaleMode === 'modulo') {
-      const k = Math.max(2, modK | 0);
-      return ((n - 1) % k) / k;
-    }
-    let t = (n - 1) / Math.max(1, maxIter - 1);
-    if (scaleMode === 'discrete') {
-      t = (Math.floor(t * maxIter) + 0.5) / maxIter;
-    }
-    return Math.min(1, Math.max(0, t));
+  if (typeof window !== 'undefined' && window.__SCHWARZ_UI_TEST_HOOK__) {
+    window.__schwarzUiTest = {
+      sState, setMode, onCanvasClick, onCanvasDblClick, onMouseMove,
+      runHoverOrbit, pinOrbitAt,
+      get CLICK_DELAY() { return _schwarzInter.getClickDelay(); },
+      set CLICK_DELAY(v) { _schwarzInter.setClickDelay(v); },
+    };
   }
-  function colormap(name, t) {
-    t = Math.max(0, Math.min(1, t));
-    if (name === 'cyclic') {
-      const tt = (t * 6) % 1;
-      return interpStops(tt, CMAP.magma);
-    }
-    return interpStops(t, CMAP[name] || CMAP.magma);
-  }
-  function interpStops(t, stops) {
-    const n = stops.length - 1;
-    const f = t * n;
-    const i = Math.min(n - 1, Math.floor(f));
-    const u = f - i;
-    const a = stops[i], b = stops[i + 1];
-    return [
-      Math.round(a[0] + (b[0] - a[0]) * u),
-      Math.round(a[1] + (b[1] - a[1]) * u),
-      Math.round(a[2] + (b[2] - a[2]) * u),
-    ];
-  }
-  const CMAP = {
-    magma:      [[0,0,4],[28,16,68],[79,18,123],[129,37,129],[181,54,122],[229,80,100],[251,135,97],[254,194,135],[252,253,191]],
-    inferno:    [[0,0,4],[31,12,72],[85,15,109],[136,34,106],[186,54,85],[227,89,51],[249,140,10],[249,201,50],[252,255,164]],
-    plasma:     [[13,8,135],[75,3,161],[125,3,168],[168,34,150],[203,70,121],[229,107,93],[248,148,65],[253,195,40],[240,249,33]],
-    viridis:    [[68,1,84],[72,40,120],[62,73,137],[49,104,142],[38,130,142],[31,158,137],[53,183,121],[109,205,89],[180,222,44],[253,231,37]],
-    cividis:    [[0,32,76],[0,52,110],[40,75,124],[80,100,128],[120,127,128],[161,156,124],[197,187,108],[230,219,84],[253,253,51]],
-    turbo:      [[48,18,59],[71,118,238],[26,196,231],[26,231,153],[97,239,71],[202,231,33],[255,184,33],[255,113,33],[224,40,9],[122,4,2]],
-    grayscale:  [[0,0,0],[64,64,64],[128,128,128],[192,192,192],[255,255,255]],
-    rainbow:    [[148,0,211],[75,0,130],[0,0,255],[0,255,0],[255,255,0],[255,127,0],[255,0,0]],
-    iceandfire: [[10,40,100],[60,120,200],[160,210,240],[245,245,245],[250,210,90],[235,120,40],[170,30,30]],
-    twotone:    [[245,245,248],[120,130,200],[40,50,110],[20,30,70]],
-  };
 
 })();

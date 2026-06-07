@@ -74,6 +74,21 @@ const Complex = {
     return result;
   },
 
+  // Real (possibly non-integer) power via the principal branch:
+  //   a^p = |a|^p · exp(i · p · arg(a)),   arg ∈ (−π, π].
+  // Used by the power-weighted QD family (Family.powerQD) for w₀^α, p^{1−α},
+  // w^{α−1}, etc. with arbitrary real α > 0. For integer p the result agrees
+  // with Complex.pow up to floating-point (principal-branch choice matches
+  // the positive real axis). a = 0 returns 0 (valid for p > 0; callers in the
+  // PQD code never request 0^p with p ≤ 0).
+  cpow(a, p) {
+    const mag2 = a.re * a.re + a.im * a.im;
+    if (mag2 < 1e-300) return {re: 0, im: 0};
+    const r   = Math.pow(mag2, 0.5 * p);
+    const ang = Math.atan2(a.im, a.re) * p;
+    return {re: r * Math.cos(ang), im: r * Math.sin(ang)};
+  },
+
   eq(a, b, tol = 1e-12) {
     return Math.abs(a.re - b.re) < tol && Math.abs(a.im - b.im) < tol;
   },

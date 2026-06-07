@@ -1,0 +1,26 @@
+{
+  "name": "Quadrature Domain Solver",
+  "short_name": "QD Solver",
+  "description": "Interactive visualization of simply connected quadrature domains, log-weighted quadrature domains, and Schwarz reflection dynamics.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#5677a8",
+  "background_color": "#fafafa",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["education", "productivity"]
+}

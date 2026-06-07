@@ -115,6 +115,10 @@ uniform int   u_maxIter;
 uniform float u_escapeR;
 uniform int   u_scaleMode;             // 0=smooth, 1=discrete, 2=log, 3=sqrt, 4=modulo
 uniform int   u_modK;                  // for modulo
+// View mode: 0 = plane (frag → w directly), 1 = z-disk (frag → z, then w = φ(z)).
+// In z-mode the same view-transform uniforms carry the zView frame, so the
+// fragment maps to a z-coordinate; we disk-clamp and lift via evalPhi(z).
+uniform int   u_viewMode;
 
 // Family enum:
 //   0 = boundedQD                 (φ = w₀ + Σ branches; F = conj(w₀) + R##)
@@ -491,9 +495,11 @@ vec2 sigma(vec2 w, inout vec2 zSeed, out bool ok) {
     if (!found) { ok = false; return vec2(0.0); }
     ok = true;
   }
-  // F has a pole at z=0 in both modes (bounded F = conj(w_0) + Σ A/(z−z_j)^k
-  // has its singularity at the z_j, but unbounded G also has a 1/z term).
-  // Guard at |z| < 1e-4 — float32-realistic threshold.
+  // z≈0 guard. Only the UNBOUNDED F/G has a genuine pole at z=0 (its c/z
+  // term); bounded F = conj(w_0) + Σ A/(z−z_j)^k is regular there (poles sit
+  // at the z_j ∈ 𝔻). So this mainly protects the unbounded path and catches a
+  // ψ that converged to a spurious tiny z. Threshold |z| < 1e-4 (1e-8 squared)
+  // is float32-realistic. (Mirrors the CPU sentinel in schwarz-common.js sigma.)
   if (dot(z, z) < 1e-8) { ok = false; return vec2(0.0); }
   zSeed = z;
   vec2 Sv = evalSchwarz(z);
@@ -540,10 +546,32 @@ void main() {
   // screen-y grows downward, but the canvas's CSS coordinate system is also
   // top-left. We compute world coords assuming y-up in world space.
   vec2 frag = gl_FragCoord.xy;        // (x: left→right, y: bottom→top)
-  // World coord at this fragment center, with y flipped so screen-up is +Im.
+  // Coordinate at this fragment center, with y flipped so screen-up is +Im.
+  // In plane mode this is the world point w; in z-disk mode it is z ∈ 𝔻/𝔻*
+  // (the same view-transform uniforms carry the zView frame).
+  vec2 p;
+  p.x = u_viewCenter.x + (frag.x - 0.5 * u_canvasSize.x) / u_pxPerUnit;
+  p.y = u_viewCenter.y + (frag.y - 0.5 * u_canvasSize.y) / u_pxPerUnit;
+
   vec2 w;
-  w.x = u_viewCenter.x + (frag.x - 0.5 * u_canvasSize.x) / u_pxPerUnit;
-  w.y = u_viewCenter.y + (frag.y - 0.5 * u_canvasSize.y) / u_pxPerUnit;
+  if (u_viewMode == 1) {
+    // z-disk view: p is z. Off-disk (outside 𝔻 bounded / inside the hole
+    // unbounded) → neutral gray matching the CPU z off-disk fill
+    // ([224,226,232], schwarz-paint.js). Otherwise lift z → w = φ(z).
+    float r2 = dot(p, p);
+    bool offDisk = (u_unbounded == 1) ? (r2 <= 1.0) : (r2 >= 1.0);
+    if (offDisk) {
+      outColor = vec4(224.0/255.0, 226.0/255.0, 232.0/255.0, 1.0);
+      return;
+    }
+    w = evalPhi(p);
+    if (any(isnan(w)) || any(isinf(w))) {
+      outColor = vec4(224.0/255.0, 226.0/255.0, 232.0/255.0, 1.0);
+      return;
+    }
+  } else {
+    w = p;
+  }
 
   if (!inOmega(w)) {
     outColor = kindToColor(4, 0);
@@ -679,7 +707,8 @@ void main() {
       // 1 / conj(z_j) = z_j / |z_j|².
       const zd = br.z.re * br.z.re + br.z.im * br.z.im;
       if (zd < 1e-300) continue;
-      const cinvRe = br.z.re / zd;       // 1/conj(z_j) = conj(z_j)? no. conj(z) = (re,-im), 1/conj(z) = (re,+im)/|z|²
+      // 1/conj(z_j) = (z_j) / |z_j|²  (since conj(z)=(re,−im) ⇒ 1/conj(z)=(re,+im)/|z|²).
+      const cinvRe = br.z.re / zd;
       const cinvIm = br.z.im / zd;
       // Iterate k = 1..A.length, accumulating conj(A_{j,k}) · (-1)^k / conj(z_j)^k.
       let powRe = 1, powIm = 0;
@@ -810,6 +839,15 @@ void main() {
     catch (e) { gl = null; }
     if (!gl) return null;
 
+    // WebGL context-loss handling. preventDefault() on 'webglcontextlost' is
+    // REQUIRED for the browser to ever fire 'webglcontextrestored'; without it
+    // the context stays permanently dead. After a loss, every GL object
+    // (program / buffers / uniforms) is invalid, so render() bails on
+    // isContextLost() and the owner (schwarz-ui ensureGPU) recreates the whole
+    // renderer on the 'webglcontextrestored' event rather than rebuilding in
+    // place. We only need the loss listener here.
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); }, false);
+
     let prog, vs, fs, vbo;
     try {
       vs = compile(gl, gl.VERTEX_SHADER,   VERT_SRC);
@@ -836,7 +874,7 @@ void main() {
       'viewCenter','pxPerUnit','canvasSize','unbounded','w0','c',
       'polyA','polyALen','branchZ','branchA','branchACount','nBranches',
       'maxIter','escapeR','mask','maskCenter','maskHalfExtent','colormap',
-      'scaleMode','modK',
+      'scaleMode','modK','viewMode',
       // LQD-specific uniforms (zero/unset for classical families).
       'family','gamma','z0','absZ0','rInfConj',
       // Polynomial-h β-correction (HANDOFF #22 / #26): unbounded LQDs only.
@@ -909,6 +947,17 @@ void main() {
           phiState.capacityError = `Branch ${j} A-length too large (${effBranches[j].A.length} > ${MAX_K}); falling back to CPU.`;
           return false;
         }
+      }
+      // Family.powerQD (bounded PQDs, α ≥ 2): the GPU fragment shader doesn't
+      // yet implement the αth-root principal-branch arithmetic needed for
+      // φ(z) = (R#(z))^{1/α} and F(z) = (R(z))^{1/α}. CPU rendering through
+      // QD.Schwarz.escapeTime works correctly via adaptPowerQD; falling back
+      // to CPU here keeps the Schwarz tab functional for PQD captures while
+      // a future pass adds the GPU code path.
+      if (phi.family === 'powerQD' || phi.family === 'powerQD_singular'
+          || phi.family === 'unboundedPQD' || phi.family === 'unboundedPQD_singular') {
+        phiState.capacityError = `Family.${phi.family} (α=${phi.alpha || '?'}): GPU shader for (R#)^{1/α} not yet implemented; falling back to CPU.`;
+        return false;
       }
       phiState.capacityError = null;
       // Mark isSingularLQD as touched (for future use) to silence linters.
@@ -1010,6 +1059,7 @@ void main() {
     }
 
     function render(view, opts) {
+      if (gl.isContextLost()) return;     // dead context — owner recreates on restore
       opts = opts || {};
       const W = Math.max(1, Math.floor(view.cssW * (window.devicePixelRatio || 1)));
       const H = Math.max(1, Math.floor(view.cssH * (window.devicePixelRatio || 1)));
@@ -1050,6 +1100,9 @@ void main() {
       const scaleModeId = SCALE_MODE_ID[opts.scaleMode || 'smooth'] | 0;
       gl.uniform1i(U.scaleMode, scaleModeId);
       gl.uniform1i(U.modK, Math.max(2, (opts.modK | 0) || 8));
+      // View mode: 1 = z-disk (frag → z → w = φ(z)), 0 = plane (frag → w).
+      // Default 0 keeps the plane path byte-for-byte unchanged.
+      gl.uniform1i(U.viewMode, opts.viewMode === 'z' ? 1 : 0);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, phiState.mask);

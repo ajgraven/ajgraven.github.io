@@ -1,14 +1,23 @@
 // =============================================================================
 // direct-ui.js -- Direct-problem tab UI.
 //
-// Three modes share the same plot canvas:
-//   1. Bounded — polynomial or rational φ; structured coefficient fields
-//      side-by-side with a live-parsing "paste expression" text input.
-//   2. Unbounded — Laurent-at-∞ φ = c·z + Σ F_l/z^l; structured (c, F_l)
-//      coefficient fields.
-//   3. Numerical — free-form math.js expression in z; DFT-extracted
-//      polynomial truncation produces an approximate h with an analyticity
-//      diagnostic.
+// A compact segmented "Domain type" control (mirroring the inverse tab's) sets
+// the family along three axes — Weight {classical | power(PQD) | log(LQD)} ×
+// Domain {bounded | unbounded | numerical} × singular(0∈Ω) — stored UNIFIED on
+// directState.{weight, mode, singular}. The three φ-input cards (one visible per
+// Domain) hold the φ / kernel coefficients and the weight PARAMETER inputs
+// (α / w₀ / z₀ / c). applyDirectMode() is the single canonical refresh: it sets
+// φ-card + param-row visibility and syncs the segmented control (INVARIANT: any
+// directState.mode/weight/singular change must go through it).
+//
+// The three Domains share the same plot canvas:
+//   1. Bounded — polynomial or rational φ (or, weighted, the rational KERNEL
+//      R#/r#); structured coefficient fields + a live-parsing "paste expression".
+//   2. Unbounded — Laurent-at-∞ φ = c·z + Σ F_l/z^l (or the weighted KERNEL r#);
+//      structured (c, F_l) coefficient fields / a kernel paste field.
+//   3. Numerical — free-form math.js expression in z (classical only); DFT-
+//      extracted polynomial truncation produces an approximate h with an
+//      analyticity diagnostic.
 //
 // Each mode pushes:
 //   • h to QD.Direct._sendHToInverseTab     (pre-fill QD tab inverse view and switch)
@@ -38,9 +47,31 @@
     coeffsNum: ['0', '1'],                                // rational numerator (default = z)
     coeffsDen: ['1'],                                     // rational denominator (default = 1)
 
+    // WEIGHT × SINGULAR — UNIFIED across bounded + unbounded (one axis each, like
+    // the inverse tab). Live in the "Domain type" card's segmented control, not in
+    // the φ cards. weight ∈ {'classical','power','log'}; singular = 0 ∈ Ω (Blaschke
+    // b_{z₀}; power/log only). Forward-kernel meaning of weight:
+    //   bounded:    power → φ=(R#)^{1/α}; log → φ=w₀·exp(r#)
+    //   unbounded:  power → φ=z·(r#)^{1/α} (c derived from r#); log → φ=c·z·exp(r#)
+    // weight≠classical forces coeffsKind='rational' (the input is the KERNEL R#/r#).
+    weight: 'classical',
+    singular: false,
+    // Bounded weight PARAMETERS (stay in the bounded φ card):
+    alpha: '2',                    // PQD exponent (power weight |w|^{2(α−1)}), α>0, ≠1
+    logW0: '2',                    // LQD gauge w₀ = φ(0)
+    z0: '0.3',                     // preimage of the origin (|z₀| < 1), singular only
+
     // Unbounded mode: φ(z) = c·z + Σ_l F_l/z^l. Strings.
     cValue: '1',                   // conformal radius (positive real)
     Fcoeffs: [],                   // [F_0, F_1, ..., F_{m-1}], strings; empty ⇒ φ = c·z
+
+    // Unbounded weight PARAMETERS (stay in the unbounded φ card; ∞∈Ω, Thm 4.3.7):
+    unsAlpha: '2',                 // PQD exponent
+    unsZ0: '1.3',                  // origin preimage |z₀|>1 (LQD-singular: free; PQD-singular: hint)
+    unsKernelNum: ['0.81', '-1.725'], // r# numerator (strings; default = a valid non-sing PQD kernel, c=0.9)
+    unsKernelDen: ['1', '-2.5'],   // r# denominator (strings)
+    unsKernelExpr: '',             // last kernel paste expression (rational in z)
+    lastWeight: 'classical',       // weight that produced lastH (for Send/Verify dispatch)
 
     // Numerical mode: any math.js expression in z.
     numExpr: 'z + 0.2*sin(z)',     // default: a non-polynomial example
@@ -49,6 +80,12 @@
     // Last successfully computed h, and the c that produced it.
     lastH: null,
     lastC: 1,
+    // Last bounded-weighted solve metadata (set by recomputeBounded; used by the
+    // Verify button and the origin-term display):
+    lastPhi: null,                 // the built φ (for the family identity verifier)
+    lastSingular: false,           // whether the last solve was a singular (0∈Ω) weighted QD
+    lastQ: null,                   // LQD-singular origin residue q  (h has + q/w)
+    lastOriginRes: null,           // PQD-singular origin residue r₀ = ∫|w|^{2(α−1)}dA − ΣC (h has + r₀/w)
 
     // True when the user's most recent action was typing in the paste field
     // (so we don't clobber what they're typing with auto-regenerated form).
@@ -94,6 +131,9 @@
   // the user toggles back to direct view (re-pushes φ boundary to the canvas).
   // ---------------------------------------------------------------------------
   let mounted = false;
+  // Forward bindings for the Phase-3 extracted modules (assigned by the install
+  // after makeOutputCard below; called by name from card handlers + _activate).
+  let recomputeAndRender, runVerify;
   function _mountUI() {
     if (mounted) return;
     mountDirectSidebar();
@@ -120,7 +160,7 @@
     root.appendChild(makePhiCardUnbounded());    // initially hidden
     root.appendChild(makePhiCardNumerical());    // initially hidden
     root.appendChild(makeOutputCard());
-    applyModeVisibility();
+    applyDirectMode();
     attachDirectHelp();      // HANDOFF #33
   }
 
@@ -150,43 +190,146 @@
        direct kernel by round-tripping.`);
   }
 
-  function applyModeVisibility() {
+  // CANONICAL Direct-tab mode refresh (mirror of ui.js applyModeVisuals). INVARIANT:
+  // any code that changes directState.mode / weight / singular MUST call this — it
+  // is the single source of truth for φ-card visibility, the weight-dependent
+  // param-row visibility inside the active φ card, and the Domain-type segmented
+  // control + singular-checkbox sync.
+  function applyDirectMode() {
     const root = document.getElementById('controls-direct');
     if (!root) return;
-    const bounded   = root.querySelector('.dir-phi-card-bounded');
-    const unbounded = root.querySelector('.dir-phi-card-unbounded');
-    const numerical = root.querySelector('.dir-phi-card-numerical');
-    if (bounded)   bounded.style.display   = directState.mode === 'bounded'   ? '' : 'none';
-    if (unbounded) unbounded.style.display = directState.mode === 'unbounded' ? '' : 'none';
-    if (numerical) numerical.style.display = directState.mode === 'numerical' ? '' : 'none';
+    const mode = directState.mode;                 // 'bounded' | 'unbounded' | 'numerical'
+    const numerical = (mode === 'numerical');
+    // Numerical is classical free-form only — it carries no weight/singular.
+    const weight = numerical ? 'classical' : directState.weight;
+    const singular = directState.singular && (weight === 'power' || weight === 'log');
+
+    const show = (sel, on) => { const el = root.querySelector(sel); if (el) el.style.display = on ? '' : 'none'; };
+    // φ-card visibility.
+    show('.dir-phi-card-bounded',   mode === 'bounded');
+    show('.dir-phi-card-unbounded', mode === 'unbounded');
+    show('.dir-phi-card-numerical', numerical);
+
+    // Domain-type segmented control + singular checkbox sync.
+    root.querySelectorAll('#dir-dm-weight .seg-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.weight === weight);
+      b.disabled = numerical;                       // weight is meaningless for numerical
+    });
+    root.querySelectorAll('#dir-dm-domain .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.domain === mode));
+    const sing = root.querySelector('#dir-dm-singular');
+    if (sing) {
+      const allowed = !numerical && weight !== 'classical';
+      sing.checked = singular;
+      sing.disabled = !allowed;
+      if (sing.parentElement) sing.parentElement.style.opacity = allowed ? '' : '0.45';
+    }
+
+    // Weight-dependent param rows inside the (bounded / unbounded) φ cards.
+    applyBoundedWeightRows(root, weight, singular);
+    applyUnboundedWeightRows(root, weight, singular);
+  }
+
+  // Bounded φ card: show the α (power) / w₀ (log) / z₀ (singular) param rows + the
+  // kernel-input hint, driven by the unified weight/singular.
+  function applyBoundedWeightRows(root, weight, singular) {
+    const show = (sel, on) => { const el = root.querySelector(sel); if (el) el.style.display = on ? '' : 'none'; };
+    show('.dir-phi-alpha-row', weight === 'power');
+    show('.dir-phi-logw0-row', weight === 'log');
+    show('.dir-phi-z0-row', (weight === 'power' || weight === 'log') && singular);
+    const hintB = root.querySelector('.dir-phi-weight-hint');
+    if (hintB) {
+      if (weight === 'power') {
+        hintB.style.display = '';
+        hintB.innerHTML = singular
+          ? 'Enter the rational kernel <strong>R#(z)</strong> + the origin preimage <strong>z₀</strong> (|z₀|&lt;1); the domain is the SINGULAR power-weighted QD (0 ∈ Ω) with φ = b<sub>z₀</sub>·(R#)<sup>1/α</sup> (realizable ⟺ φ univalent). h gains an origin term r₀/w (shown below).'
+          : 'Enter the rational kernel <strong>R#(z)</strong>; the domain is the power-weighted QD with φ = (R#)<sup>1/α</sup> (weight |w|<sup>2(α−1)</sup>). R# must be analytic and non-vanishing on 𝔻̄.';
+      } else if (weight === 'log') {
+        hintB.style.display = '';
+        hintB.innerHTML = singular
+          ? 'Enter the rational kernel <strong>r#(z)</strong> + the origin preimage <strong>z₀</strong> (|z₀|&lt;1); the domain is the SINGULAR log-weighted QD (0 ∈ Ω) with φ = γ·b<sub>z₀</sub>·exp(r#), γ = w₀/|z₀|. h gains an origin pole q/w (shown below).'
+          : 'Enter the rational kernel <strong>r#(z)</strong>; the domain is the log-weighted QD with φ = w₀·exp(r#). r# must be analytic on 𝔻̄.';
+      } else {
+        hintB.style.display = 'none';
+      }
+    }
+  }
+
+  // Unbounded φ card: classical-Laurent vs weighted-kernel blocks, α/c/z₀ rows + hint.
+  function applyUnboundedWeightRows(root, weight, singular) {
+    const weighted = (weight === 'power' || weight === 'log');
+    const show = (sel, on) => { const el = root.querySelector(sel); if (el) el.style.display = on ? '' : 'none'; };
+    show('.dir-phi-uns-classical', !weighted);
+    show('.dir-phi-uns-kernel', weighted);
+    show('.dir-phi-uns-alpha-row', weight === 'power');
+    // c is a user input for classical + log; DERIVED for power (φ'(∞) from r#).
+    show('.dir-phi-uns-c-row', weight !== 'power');
+    show('.dir-phi-uns-z0-row', weighted && singular);
+    const hintB = root.querySelector('.dir-phi-uns-weight-hint');
+    if (hintB) {
+      if (weight === 'power') hintB.innerHTML = singular
+        ? 'SINGULAR unbounded power QD (0∈Ω): φ = z·b<sub>z₀</sub>·(r#)<sup>1/α</sup>. z₀ is pinned by r(z₀)=0 (= 1/conj of a zero of r#); the z₀ field selects among zeros. No origin term.'
+        : 'Unbounded power QD: φ = z·(r#)<sup>1/α</sup>, φ′(∞)=c derived from r#. h = finite poles + polynomial-at-∞.';
+      else if (weight === 'log') hintB.innerHTML = singular
+        ? 'SINGULAR unbounded log QD (0∈Ω): φ = c·|z₀|·z·b<sub>z₀</sub>·exp(r#). z₀ (|z₀|>1) is a free input; h gains an origin pole q/w (shown below).'
+        : 'Unbounded log QD: φ = c·z·exp(r#), c = φ′(∞) (input). h = finite poles + polynomial-at-∞.';
+    }
   }
 
   // ---------------------------------------------------------------------------
-  // Domain-type card
+  // Domain-type card — compact segmented Weight × Domain × singular control,
+  // styled like the inverse tab's #dm-* control (shared .segmented / .seg-btn CSS).
   // ---------------------------------------------------------------------------
   function makeDomainTypeCard() {
     const card = section('Domain type', `
-      <div class="row">
-        <label><input type="radio" name="dir-domain-mode" value="bounded" ${directState.mode==='bounded'?'checked':''}> Bounded</label>
-        <label style="margin-left:14px;"><input type="radio" name="dir-domain-mode" value="unbounded" ${directState.mode==='unbounded'?'checked':''}> Unbounded</label>
+      <div class="row" style="margin-bottom:6px; align-items:center;">
+        <span class="domain-mode-group-label" style="width:52px; margin:0;">Weight</span>
+        <div class="segmented" id="dir-dm-weight" role="group" aria-label="Weight class">
+          <button type="button" class="seg-btn" data-weight="classical">QD</button>
+          <button type="button" class="seg-btn" data-weight="power">PQD</button>
+          <button type="button" class="seg-btn" data-weight="log">LQD</button>
+        </div>
       </div>
-      <div class="row">
-        <label><input type="radio" name="dir-domain-mode" value="numerical" ${directState.mode==='numerical'?'checked':''}> Numerical (any expression)</label>
+      <div class="row" style="margin-bottom:6px; align-items:center;">
+        <span class="domain-mode-group-label" style="width:52px; margin:0;">Domain</span>
+        <div class="segmented" id="dir-dm-domain" role="group" aria-label="Domain extent">
+          <button type="button" class="seg-btn" data-domain="bounded">Bounded</button>
+          <button type="button" class="seg-btn" data-domain="unbounded">Unbounded</button>
+          <button type="button" class="seg-btn" data-domain="numerical">Numerical</button>
+        </div>
       </div>
+      <label class="row" style="margin:0 0 2px; gap:6px;">
+        <input type="checkbox" id="dir-dm-singular"> singular (0 ∈ Ω)
+      </label>
       <div class="hint" style="margin-top: 6px;">
-        <strong>Bounded</strong>: φ(z) = Σ c<sub>k</sub> z<sup>k</sup> (polynomial).
-        <strong>Unbounded</strong>: φ(z) = c·z + Σ F<sub>l</sub>/z<sup>l</sup>.
-        <strong>Numerical</strong>: free-form math.js expression in z; we infer the
-        bounded-QD polynomial by DFT and report a non-analyticity diagnostic.
+        <strong>Weight</strong>: QD (classical) · PQD (power |w|<sup>2(α−1)</sup>) · LQD (log).
+        <strong>Domain</strong>: Bounded (𝔻→Ω) · Unbounded (∞∈Ω) · Numerical (free-form φ, classical only).
+        <strong>singular</strong>: 0 ∈ Ω (Blaschke factor; PQD/LQD).
       </div>
     `);
-    card.querySelectorAll('input[name="dir-domain-mode"]').forEach(r => {
-      r.addEventListener('change', () => {
-        directState.mode = r.value;
+    card.querySelectorAll('#dir-dm-weight .seg-btn').forEach(b => b.addEventListener('click', () => {
+      if (directState.mode === 'numerical') return;          // weight locked for numerical
+      directState.weight = b.dataset.weight;
+      // Weighted kernels need a rational kernel: force rational kind on the bounded card.
+      if (directState.weight !== 'classical' && directState.coeffsKind !== 'rational') {
+        directState.coeffsKind = 'rational';
         directState.expressionInput = false;
-        applyModeVisibility();
-        recomputeAndRender();
-      });
+        const bcard = document.querySelector('.dir-phi-card-bounded');
+        if (bcard) { renderCoeffFields(bcard); setPasteFromCoeffs(bcard); }
+      }
+      applyDirectMode();
+      recomputeAndRender();
+    }));
+    card.querySelectorAll('#dir-dm-domain .seg-btn').forEach(b => b.addEventListener('click', () => {
+      directState.mode = b.dataset.domain;
+      directState.expressionInput = false;
+      applyDirectMode();
+      recomputeAndRender();
+    }));
+    const sing = card.querySelector('#dir-dm-singular');
+    if (sing) sing.addEventListener('change', () => {
+      directState.singular = sing.checked;
+      applyDirectMode();
+      recomputeAndRender();
     });
     return card;
   }
@@ -206,7 +349,7 @@
   // field successfully parses, we populate the structured fields.
   // ---------------------------------------------------------------------------
   function makePhiCardBounded() {
-    // Marker class so applyModeVisibility() can show/hide this card.
+    // Marker class so applyDirectMode() can show/hide this card.
     const card = section('Riemann map φ(z) — bounded', `
       <div class="hint">
         Polynomial φ(z) = Σ<sub>k=0..n</sub> c<sub>k</sub> z<sup>k</sup>, with
@@ -221,6 +364,21 @@
           </select>
         </label>
       </div>
+
+      <!-- Weight PARAMETER inputs (the Weight/singular selectors live in the
+           Domain-type card; visibility driven by applyBoundedWeightRows). -->
+      <div class="row" style="margin-bottom: 6px; gap: 10px; align-items: center;">
+        <label class="dir-phi-alpha-row" style="display:none;">α =
+          <input type="text" class="dir-phi-alpha" value="2" style="width: 56px; font-family: ui-monospace, monospace;">
+        </label>
+        <label class="dir-phi-logw0-row" style="display:none;">w₀ =
+          <input type="text" class="dir-phi-logw0" value="2" style="width: 70px; font-family: ui-monospace, monospace;">
+        </label>
+        <label class="dir-phi-z0-row" style="display:none;">z₀ =
+          <input type="text" class="dir-phi-z0" value="0.3" style="width: 70px; font-family: ui-monospace, monospace;">
+        </label>
+      </div>
+      <div class="dir-phi-weight-hint hint" style="display:none; margin-bottom: 6px;"></div>
 
       <!-- Expression input -->
       <div class="row" style="margin-bottom: 4px; align-items: stretch;">
@@ -318,6 +476,15 @@
       }
     });
 
+    // Weight PARAMETER inputs (the Weight/singular selectors are in the Domain-type
+    // card; row visibility is handled centrally by applyBoundedWeightRows).
+    const alphaInp = card.querySelector('.dir-phi-alpha');
+    if (alphaInp) alphaInp.addEventListener('input', () => { directState.alpha = alphaInp.value; recomputeAndRender(); });
+    const logw0Inp = card.querySelector('.dir-phi-logw0');
+    if (logw0Inp) logw0Inp.addEventListener('input', () => { directState.logW0 = logw0Inp.value; recomputeAndRender(); });
+    const z0Inp = card.querySelector('.dir-phi-z0');
+    if (z0Inp) z0Inp.addEventListener('input', () => { directState.z0 = z0Inp.value; recomputeAndRender(); });
+
     card.classList.add('dir-phi-card-bounded');
     return card;
   }
@@ -349,23 +516,92 @@
         </label>
       </div>
 
+      <!-- Weight PARAMETER inputs (Weight/singular live in the Domain-type card;
+           row visibility handled centrally by applyUnboundedWeightRows). -->
+      <div class="row" style="margin-bottom: 6px; gap: 10px; align-items: center;">
+        <label class="dir-phi-uns-alpha-row" style="display:none;">α =
+          <input type="text" class="dir-phi-uns-alpha" value="${escapeAttr(directState.unsAlpha)}" style="width: 56px; font-family: ui-monospace, monospace;">
+        </label>
+        <label class="dir-phi-uns-z0-row" style="display:none;">z₀ =
+          <input type="text" class="dir-phi-uns-z0" value="${escapeAttr(directState.unsZ0)}" style="width: 70px; font-family: ui-monospace, monospace;">
+        </label>
+      </div>
+
       <div class="row">
-        <label>c (φ′(∞)) =
+        <label class="dir-phi-uns-c-row">c (φ′(∞)) =
           <input type="text" class="cnum dir-phi-uns-c" value="${directState.cValue}" style="width: 80px;">
         </label>
       </div>
 
-      <div class="hint">Laurent coefficients F<sub>l</sub> (l = 0, 1, …):</div>
-      <div class="dir-phi-uns-Fcoeffs"></div>
-      <div class="row" style="margin-top: 6px;">
-        <button class="small dir-phi-uns-add">+ Add F<sub>l</sub></button>
-        <button class="small dir-phi-uns-rm" style="margin-left: 4px;">− Remove last</button>
+      <!-- Classical Laurent inputs (hidden when a weight is selected). -->
+      <div class="dir-phi-uns-classical">
+        <div class="hint">Laurent coefficients F<sub>l</sub> (l = 0, 1, …):</div>
+        <div class="dir-phi-uns-Fcoeffs"></div>
+        <div class="row" style="margin-top: 6px;">
+          <button class="small dir-phi-uns-add">+ Add F<sub>l</sub></button>
+          <button class="small dir-phi-uns-rm" style="margin-left: 4px;">− Remove last</button>
+        </div>
+      </div>
+
+      <!-- Weighted kernel input (shown when weight = power/log). -->
+      <div class="dir-phi-uns-kernel" style="display:none;">
+        <div class="dir-phi-uns-weight-hint hint" style="margin-bottom: 6px;"></div>
+        <div class="row" style="align-items: stretch;">
+          <label style="flex: 1 1 auto; display: flex; align-items: center; gap: 6px;">
+            <span style="white-space: nowrap;">r#(z) =</span>
+            <input type="text" class="dir-phi-uns-kexpr"
+                   placeholder="e.g. (0.81 - 1.725z)/(1 - 2.5z)"
+                   style="flex: 1 1 auto; min-width: 200px; font-family: ui-monospace, monospace;">
+          </label>
+          <span class="dir-phi-uns-kstatus" style="margin-left: 6px; font-size: 16px; line-height: 1.6;" aria-live="polite"></span>
+        </div>
+        <div class="hint" style="margin-top: 4px;">
+          The rational kernel must be analytic on the closed exterior |z|≥1 (poles
+          strictly inside 𝔻); a pole at z=0 gives h a polynomial part at ∞.
+          Realizable ⟺ φ univalent. (Power: c is derived from r#. Singular PQD:
+          z₀ is derived from a zero of r#; the z₀ field is an optional hint.)
+        </div>
       </div>
 
       <div class="dir-phi-uns-warnings" style="margin-top: 8px; font-size: 11px; color: #b8860b;"></div>
     `);
 
     renderUnboundedFcoeffs(card);
+
+    // ---- Weighted-unbounded controls (Weight/singular live in the Domain-type
+    // card; row visibility handled centrally by applyUnboundedWeightRows). ----
+    const setKStatus = (state, msg) => { const el = card.querySelector('.dir-phi-uns-kstatus'); if (!el) return; el.textContent = state === 'ok' ? '✓' : state === 'err' ? '✗' : ''; el.title = msg || ''; };
+    const setKExprFromState = () => {
+      const inp = card.querySelector('.dir-phi-uns-kexpr'); if (!inp) return;
+      try {
+        const P = directState.unsKernelNum.map(parseComplex), Q = directState.unsKernelDen.map(parseComplex);
+        const pStr = QD.Direct.polynomialToString(P), qStr = QD.Direct.polynomialToString(Q);
+        const wrap = s => /[ +\-]/.test(s.trim()) ? '(' + s + ')' : s;
+        inp.value = wrap(pStr) + ' / ' + wrap(qStr);
+      } catch (e) { /* leave as-is */ }
+    };
+    setKExprFromState();
+
+    card.querySelector('.dir-phi-uns-alpha').addEventListener('input', e => { directState.unsAlpha = e.target.value; recomputeAndRender(); });
+    card.querySelector('.dir-phi-uns-z0').addEventListener('input', e => { directState.unsZ0 = e.target.value; recomputeAndRender(); });
+    const kexpr = card.querySelector('.dir-phi-uns-kexpr');
+    let kTimer = null;
+    const parseKernelExpr = () => {
+      const expr = kexpr.value.trim(); if (!expr) { setKStatus('idle', ''); return; }
+      const mathLib = (typeof window !== 'undefined') ? window.math : null;
+      if (!mathLib) { setKStatus('err', 'math.js not loaded'); return; }
+      let parsed; try { parsed = QD.Direct.parseRationalInZ(expr, mathLib); }
+      catch (err) { setKStatus('err', err.message || String(err)); return; }
+      const num = Array.isArray(parsed) ? parsed : parsed.num;
+      const den = Array.isArray(parsed) ? [{ re: 1, im: 0 }] : parsed.den;
+      directState.unsKernelNum = num.map(coeffToString);
+      directState.unsKernelDen = den.map(coeffToString);
+      setKStatus('ok', '');
+      const pre = card.querySelector('.dir-phi-uns-preset'); if (pre) pre.value = '';
+      recomputeAndRender();
+    };
+    kexpr.addEventListener('input', () => { if (kTimer) clearTimeout(kTimer); kTimer = setTimeout(parseKernelExpr, 150); });
+    kexpr.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); if (kTimer) clearTimeout(kTimer); parseKernelExpr(); } });
 
     card.querySelector('.dir-phi-uns-c').addEventListener('input', e => {
       directState.cValue = e.target.value;
@@ -466,12 +702,15 @@
       </div>
       <div class="dir-phi-num-msg" style="font-size: 11px; min-height: 1.2em; margin-bottom: 6px;"></div>
 
-      <div class="row">
-        <label>Truncation degree (DFT cap):
-          <input type="number" class="dir-phi-num-maxorder" min="1" max="32"
-                 value="${directState.numMaxOrder}" style="width: 64px;">
-        </label>
-      </div>
+      <details style="margin-bottom: 4px;">
+        <summary style="cursor:pointer; user-select:none; font-size:12px; color:#555;">Advanced</summary>
+        <div class="row" style="margin-top:6px;">
+          <label>Truncation degree (DFT cap):
+            <input type="number" class="dir-phi-num-maxorder" min="1" max="32"
+                   value="${directState.numMaxOrder}" style="width: 64px;">
+          </label>
+        </div>
+      </details>
 
       <div class="dir-phi-num-diag" style="margin-top: 8px; font-size: 11px; color: #5677a8; font-family: ui-monospace, monospace;"></div>
       <div class="dir-phi-num-warnings" style="margin-top: 4px; font-size: 11px; color: #b8860b;"></div>
@@ -618,7 +857,6 @@
     box.innerHTML = '';
     // Show/hide the polynomial-mode degree-adjustment buttons.
     const addBtn = card.querySelector('.dir-phi-add');
-    const rmBtn  = card.querySelector('.dir-phi-rm');
     const polyDegRow = addBtn && addBtn.parentElement;
     if (polyDegRow) polyDegRow.style.display = (directState.coeffsKind === 'rational') ? 'none' : '';
     if (directState.coeffsKind === 'rational') {
@@ -754,9 +992,18 @@
         msg.textContent = 'Send hook not installed yet (try again in a moment).';
         return;
       }
-      const opts = (directState.mode === 'unbounded')
-        ? { unbounded: true, c: directState.lastC }
-        : { unbounded: false };
+      // Tag the FULL family identity so the inverse tab lands in the matching
+      // mode (the receiving _sendHToInverseTab composes the mode from these).
+      const unbounded = directState.mode === 'unbounded';
+      const opts = { unbounded };
+      if (unbounded) opts.c = directState.lastC;
+      if (directState.lastWeight === 'power') {
+        opts.alpha = parseFloat(unbounded ? directState.unsAlpha : directState.alpha);
+      } else if (directState.lastWeight === 'log') {
+        opts.lqd = true;
+      }
+      if (directState.lastWeight !== 'classical' && directState.lastSingular) opts.singular = true;
+      if (directState.lastQ) opts.q = directState.lastQ;
       hook(directState.lastH, opts);
       msg.style.color = '#2a8f2a';
       msg.textContent = 'Sent. Switched to inverse view.';
@@ -771,384 +1018,14 @@
   }
 
   // ===========================================================================
-  // Verify: check the BOUNDARY IDENTITY directly.
-  // ---------------------------------------------------------------------------
-  //   For any classical QD (bounded or unbounded), the Schwarz function
-  //   satisfies σ(w) = w̄ on ∂Ω, and h is the meromorphic representative
-  //   of σ. So at every boundary sample w_n = φ(e^{iθ_n}) the identity
-  //
-  //       h(w_n)  =  conj(w_n)
-  //
-  //   must hold. This is exact for any φ that genuinely defines a QD (the
-  //   symbolic kernel produces h such that the identity is satisfied to
-  //   machine precision); for the numerical kernel applied to a polynomial-
-  //   truncated φ, the residual is the truncation error; for non-QD φ
-  //   (e.g. higher-Laurent unbounded shapes) the residual is large and
-  //   confirms that Ω is not actually a QD.
-  //
-  //   No inverse solver involved — h is explicit from φ via Faber, so the
-  //   verification is purely a forward evaluation.
+  // Recompute pipeline + Verify -> direct-recompute.js / direct-verify.js
+  // (Phase-3 item E). One shared dCtx; the card-builder handlers + _activate
+  // call the captured names. parseComplex / coeffToString / section stay here
+  // (host card builders use them too).
   // ===========================================================================
-  function runVerify(card) {
-    const resBox = card.querySelector('.dir-verify-result');
-    const overlayHook = window.QD && window.QD.Direct && window.QD.Direct._setPlotOverlay;
-    if (overlayHook) overlayHook(null);                  // clear any stale overlay
-
-    if (!directState.lastH) {
-      resBox.style.color = '#b53030';
-      resBox.textContent = 'Compute a valid h first.';
-      return;
-    }
-
-    // Sample φ at N points on |z|=1.
-    const N = 500;
-    let phiPts;
-    try { phiPts = sampleAnalyticPhi(N); }
-    catch (e) {
-      resBox.style.color = '#b53030';
-      resBox.textContent = 'Could not sample φ: ' + (e.message || e);
-      return;
-    }
-
-    // The correct identity is: h(φ(z)) − conj(φ(z)) is analytic in 𝔻 (after
-    // composing with φ), so its Fourier expansion on |z|=1 has only non-
-    // negative-frequency terms. We measure the negative-frequency Fourier
-    // mass — this should be ≈ 0 for any valid classical QD.
-    const v = QD.Direct.verifyBoundaryIdentity(directState.lastH, phiPts);
-
-    // Relative score: negMass normalised by the boundary-data scale.
-    const relNeg = v.scale > 0 ? v.negMass / v.scale : v.negMass;
-    let color;
-    if      (relNeg < 1e-8) color = '#2a8f2a';
-    else if (relNeg < 1e-2) color = '#b8860b';
-    else                    color = '#b53030';
-
-    resBox.style.color = color;
-    resBox.innerHTML =
-      'Fourier diagnostic (' + N + ' samples on |z|=1):<br>' +
-      '&nbsp;&nbsp;negative-freq mass = <strong>' + v.negMass.toExponential(2) +
-      '</strong> (relative ' + relNeg.toExponential(2) + ')<br>' +
-      '&nbsp;&nbsp;<span style="color:#888">zero-mode mass = ' + v.zeroMass.toExponential(2) +
-      ', positive-freq mass = ' + v.posMass.toExponential(2) + '</span>';
-  }
-
-  // Sample the user's input φ at N uniform θ on |z|=1, in the mode-appropriate way.
-  function sampleAnalyticPhi(N) {
-    if (directState.mode === 'bounded') {
-      if (directState.coeffsKind === 'rational') {
-        const P = directState.coeffsNum.map(parseComplex);
-        const Q = directState.coeffsDen.map(parseComplex);
-        const pts = new Array(N);
-        for (let n = 0; n < N; n++) {
-          const t = 2 * Math.PI * n / N;
-          const z = { re: Math.cos(t), im: Math.sin(t) };
-          const pv = QD.Direct.evalPolyAscending(P, z);
-          const qv = QD.Direct.evalPolyAscending(Q, z);
-          const d2 = qv.re*qv.re + qv.im*qv.im;
-          pts[n] = { re: (pv.re*qv.re + pv.im*qv.im) / d2,
-                     im: (pv.im*qv.re - pv.re*qv.im) / d2 };
-        }
-        return pts;
-      }
-      const cs = directState.coeffs.map(parseComplex);
-      return QD.Direct.sampleBoundaryPolynomial(cs, N);
-    } else if (directState.mode === 'unbounded') {
-      const c = Number(directState.cValue);
-      const F = directState.Fcoeffs.map(parseComplex);
-      return QD.Direct.sampleBoundaryLaurent(c, F, N);
-    } else {
-      // Numerical: re-evaluate the user's expression.
-      if (!window.math) throw new Error('math.js not loaded');
-      const compiled = window.math.parse(directState.numExpr).compile();
-      const pts = new Array(N);
-      for (let n = 0; n < N; n++) {
-        const theta = 2 * Math.PI * n / N;
-        const v = compiled.evaluate({ z: window.math.complex(Math.cos(theta), Math.sin(theta)) });
-        if (typeof v === 'number') pts[n] = { re: v, im: 0 };
-        else pts[n] = { re: v.re, im: v.im };
-      }
-      return pts;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Recompute h and redraw ∂Ω. Dispatches on directState.mode.
-  // ---------------------------------------------------------------------------
-  function recomputeAndRender() {
-    if (!mounted) return;
-    const root = document.getElementById('controls-direct');
-    if (!root) return;
-
-    const hDisp   = root.querySelector('.dir-h-display');
-    const hKatex  = root.querySelector('.dir-h-katex');
-    const errBox  = root.querySelector('.dir-error');
-    if (hDisp) hDisp.textContent = '';
-    if (hKatex) hKatex.innerHTML = '';
-    if (errBox) errBox.textContent = '';
-
-    if (directState.mode === 'bounded') {
-      recomputeBounded(root, hDisp, hKatex, errBox);
-    } else if (directState.mode === 'unbounded') {
-      recomputeUnbounded(root, hDisp, hKatex, errBox);
-    } else {
-      recomputeNumerical(root, hDisp, hKatex, errBox);
-    }
-  }
-
-  function recomputeNumerical(root, hDisp, hKatex, errBox) {
-    const card    = root.querySelector('.dir-phi-card-numerical');
-    const status  = card && card.querySelector('.dir-phi-num-status');
-    const msg     = card && card.querySelector('.dir-phi-num-msg');
-    const diag    = card && card.querySelector('.dir-phi-num-diag');
-    const warnBox = card && card.querySelector('.dir-phi-num-warnings');
-    if (status)  status.textContent = '';
-    if (msg)     msg.textContent = '';
-    if (diag)    diag.textContent = '';
-    if (warnBox) warnBox.textContent = '';
-
-    const exprStr = directState.numExpr.trim();
-    if (!exprStr) {
-      if (msg) { msg.style.color = '#888'; msg.textContent = 'enter an expression'; }
-      return;
-    }
-    if (typeof window === 'undefined' || !window.math || !window.math.parse) {
-      if (errBox) errBox.textContent = 'math.js not loaded';
-      return;
-    }
-
-    // Parse expression once; build a numeric phiFn.
-    let node;
-    try { node = window.math.parse(exprStr); }
-    catch (err) {
-      if (status) { status.textContent = '✗'; status.style.color = '#b53030'; }
-      if (msg) { msg.style.color = '#b53030'; msg.textContent = 'parse: ' + (err.message || err); }
-      return;
-    }
-    let compiled;
-    try { compiled = node.compile(); }
-    catch (err) {
-      if (status) { status.textContent = '✗'; status.style.color = '#b53030'; }
-      if (msg) { msg.style.color = '#b53030'; msg.textContent = 'compile: ' + (err.message || err); }
-      return;
-    }
-    const phiFn = z => {
-      const v = compiled.evaluate({ z: window.math.complex(z.re, z.im) });
-      if (typeof v === 'number') return { re: v, im: 0 };
-      if (v && typeof v.re === 'number' && typeof v.im === 'number') return { re: v.re, im: v.im };
-      throw new Error('expression did not evaluate to a complex/number');
-    };
-
-    let result;
-    try {
-      result = QD.Direct.numericalBoundedQD(phiFn, {
-        numSamples: 256,
-        maxOrder: directState.numMaxOrder,
-      });
-    } catch (err) {
-      if (status) { status.textContent = '✗'; status.style.color = '#b53030'; }
-      if (msg) { msg.style.color = '#b53030'; msg.textContent = err.message || String(err); }
-      return;
-    }
-
-    directState.lastH = result.hData;
-    directState.lastC = 0;                          // bounded mode (numerical reduces to bounded)
-
-    if (status) { status.textContent = '✓'; status.style.color = '#2a8f2a'; }
-    if (msg) {
-      msg.style.color = '#2a8f2a';
-      msg.textContent = 'truncated at degree ' + result.truncationOrder
-                      + ' (analyticity score = ' + result.analyticityScore.toExponential(2) + ')';
-    }
-    if (diag) {
-      const lines = ['Recovered Taylor coefficients of φ at z=0:'];
-      for (let k = 0; k <= Math.min(result.truncationOrder, 6); k++) {
-        const c = result.taylorCoeffs[k];
-        lines.push('  c_' + k + ' = ' + formatNumLocal(c.re) + (c.im >= 0 ? '+' : '') + formatNumLocal(c.im) + 'i');
-      }
-      if (result.truncationOrder > 6) lines.push('  …');
-      diag.textContent = lines.join('\n');
-    }
-    if (warnBox && result.warnings.length) warnBox.textContent = '⚠ ' + result.warnings.join('; ');
-
-    displayH(hDisp, hKatex, result.hData, /*isUnbounded=*/false);
-
-    // Live ∂Ω preview: sample using the user's phiFn directly.
-    try {
-      const N = 400;
-      const pts = new Array(N);
-      for (let n = 0; n < N; n++) {
-        const theta = 2 * Math.PI * n / N;
-        pts[n] = phiFn({ re: Math.cos(theta), im: Math.sin(theta) });
-      }
-      pushBoundaryToPlot(pts, false);
-    } catch (e) { /* preview is best-effort */ }
-  }
-
-  function formatNumLocal(x) {
-    if (!isFinite(x)) return String(x);
-    if (Math.abs(x) < 1e-12) return '0';
-    if (Math.abs(x - Math.round(x)) < 1e-10) return String(Math.round(x));
-    return Number(x.toPrecision(6)).toString();
-  }
-
-  function recomputeBounded(root, hDisp, hKatex, errBox) {
-    const warnBox = root.querySelector('.dir-phi-warnings');
-    if (warnBox) warnBox.textContent = '';
-
-    if (directState.coeffsKind === 'rational') {
-      let P, Q;
-      try {
-        P = directState.coeffsNum.map(parseComplex);
-        Q = directState.coeffsDen.map(parseComplex);
-      } catch (err) {
-        if (errBox) errBox.textContent = 'Coefficient parse error: ' + err.message;
-        return;
-      }
-      let result;
-      try { result = QD.Direct.boundedQDRational(P, Q); }
-      catch (err) {
-        if (errBox) errBox.textContent = err.message;
-        directState.lastH = null;
-        return;
-      }
-      directState.lastH = result.hData;
-      directState.lastC = 0;
-      if (warnBox && result.warnings.length) warnBox.textContent = '⚠ ' + result.warnings.join('; ');
-
-      displayH(hDisp, hKatex, result.hData);
-      const N = 400;
-      const pts = new Array(N);
-      for (let n = 0; n < N; n++) {
-        const t = 2 * Math.PI * n / N;
-        const z = { re: Math.cos(t), im: Math.sin(t) };
-        const pv = QD.Direct.evalPolyAscending(P, z);
-        const qv = QD.Direct.evalPolyAscending(Q, z);
-        const d2 = qv.re*qv.re + qv.im*qv.im;
-        pts[n] = { re: (pv.re*qv.re + pv.im*qv.im) / d2,
-                   im: (pv.im*qv.re - pv.re*qv.im) / d2 };
-      }
-      pushBoundaryToPlot(pts, false);
-      return;
-    }
-
-    // Polynomial path.
-    let coeffs;
-    try { coeffs = directState.coeffs.map(parseComplex); }
-    catch (err) {
-      if (errBox) errBox.textContent = 'Coefficient parse error: ' + err.message;
-      return;
-    }
-    let result;
-    try { result = QD.Direct.boundedQD(coeffs); }
-    catch (err) {
-      if (errBox) errBox.textContent = err.message;
-      directState.lastH = null;
-      return;
-    }
-    directState.lastH = result.hData;
-    directState.lastC = 0;
-    if (warnBox && result.warnings.length) warnBox.textContent = '⚠ ' + result.warnings.join('; ');
-
-    displayH(hDisp, hKatex, result.hData);
-    pushBoundaryToPlot(QD.Direct.sampleBoundaryPolynomial(coeffs, 400), false);
-  }
-
-  function recomputeUnbounded(root, hDisp, hKatex, errBox) {
-    const warnBox = root.querySelector('.dir-phi-uns-warnings');
-    if (warnBox) warnBox.textContent = '';
-
-    let c;
-    try {
-      const parsed = parseComplex(directState.cValue);
-      if (Math.abs(parsed.im) > 1e-12 || parsed.re <= 0 || !isFinite(parsed.re)) {
-        throw new Error("c must be a positive real number");
-      }
-      c = parsed.re;
-    } catch (err) {
-      if (errBox) errBox.textContent = 'c parse error: ' + err.message;
-      return;
-    }
-
-    let F;
-    try { F = directState.Fcoeffs.map(parseComplex); }
-    catch (err) {
-      if (errBox) errBox.textContent = 'F coefficient parse error: ' + err.message;
-      return;
-    }
-
-    let result;
-    try { result = QD.Direct.unboundedQD(c, F); }
-    catch (err) {
-      if (errBox) errBox.textContent = err.message;
-      directState.lastH = null;
-      return;
-    }
-    directState.lastH = result.hData;
-    directState.lastC = c;
-    if (warnBox && result.warnings.length) warnBox.textContent = '⚠ ' + result.warnings.join('; ');
-
-    displayH(hDisp, hKatex, result.hData, /*isUnbounded=*/true, c);
-    pushBoundaryToPlot(QD.Direct.sampleBoundaryLaurent(c, F, 400), /*unbounded=*/true);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Display the computed h in both text and KaTeX forms.
-  // ---------------------------------------------------------------------------
-  function displayH(hDisp, hKatex, hData, isUnbounded, cValue) {
-    const lines = ['h(w) = '];
-    const polyPart = hData.polyPart || [];
-    if (polyPart.length > 0) {
-      const polyTerms = [];
-      for (let l = 0; l < polyPart.length; l++) {
-        const c = polyPart[l];
-        if (Math.abs(c.re) < 1e-14 && Math.abs(c.im) < 1e-14) continue;
-        polyTerms.push('  ' + complexToString(c) + (l === 0 ? '' : ' · w' + (l === 1 ? '' : '^' + l)));
-      }
-      if (polyTerms.length) lines.push.apply(lines, polyTerms);
-    }
-    for (const pole of hData.poles) {
-      for (let k = 0; k < pole.principal.length; k++) {
-        const C = pole.principal[k];
-        const denPow = (k === 0) ? '' : '^' + (k + 1);
-        lines.push('  ' + complexToString(C) + ' / (w − ' + complexToString(pole.a) + ')' + denPow);
-      }
-    }
-    if (lines.length === 1) lines.push('  0');
-    if (hDisp) hDisp.textContent = lines.join('\n');
-
-    if (hKatex && window.katex) {
-      try {
-        let body = '';
-        let first = true;
-        for (let l = 0; l < polyPart.length; l++) {
-          const c = polyPart[l];
-          if (Math.abs(c.re) < 1e-14 && Math.abs(c.im) < 1e-14) continue;
-          const cstr = complexToKatex(c);
-          body += (first ? '' : ' + ') + (l === 0 ? cstr
-                  : (l === 1 ? cstr + '\\,w' : cstr + '\\,w^{' + l + '}'));
-          first = false;
-        }
-        for (const pole of hData.poles) {
-          for (let k = 0; k < pole.principal.length; k++) {
-            const C = pole.principal[k];
-            const cstr = complexToKatex(C);
-            const den = (k === 0)
-              ? `(w - (${complexToKatex(pole.a)}))`
-              : `(w - (${complexToKatex(pole.a)}))^{${k + 1}}`;
-            body += (first ? '' : ' + ') + '\\frac{' + cstr + '}{' + den + '}';
-            first = false;
-          }
-        }
-        if (first) body = '0';
-        window.katex.render('h(w) = ' + body, hKatex, { throwOnError: false });
-      } catch (e) { /* leave text fallback */ }
-    }
-  }
-
-  function pushBoundaryToPlot(pts, unbounded) {
-    const setBdy = window.QD && window.QD.Direct && window.QD.Direct._setPlotBoundary;
-    if (setBdy) setBdy(pts, { unbounded: !!unbounded });
-  }
+  const dCtx = { directState, parseComplex, isMounted: () => mounted };
+  ({ recomputeAndRender } = window.QD_UI.installDirectRecompute(dCtx));
+  ({ runVerify } = window.QD_UI.installDirectVerify(dCtx));
 
   // ---------------------------------------------------------------------------
   // String <-> Complex helpers (parser lives in QD.Direct.parseRationalInZ)
@@ -1175,8 +1052,6 @@
   // are kept as separate functions for readability at the call sites —
   // they all map to the same primitive.
   function coeffToString(c)    { return QD.Complex.format(c); }
-  function complexToString(c)  { return QD.Complex.format(c); }
-  function complexToKatex(c)   { return QD.Complex.format(c); }
 
   // ---------------------------------------------------------------------------
   // Section helper (matches existing card markup)

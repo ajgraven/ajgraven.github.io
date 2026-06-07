@@ -249,7 +249,7 @@
     closeShortcutsOverlay();
     const list = items || _defaultShortcuts();
     const html = `
-      <div class="help-popover" style="max-width:340px;">
+      <div class="help-popover">
         <h3 style="margin:0 0 6px 0; font-size:13px;">Keyboard shortcuts</h3>
         <table class="shortcuts-table">
           ${list.map(it => `<tr><td><kbd>${it.key}</kbd></td><td>${it.desc}</td></tr>`).join('')}
